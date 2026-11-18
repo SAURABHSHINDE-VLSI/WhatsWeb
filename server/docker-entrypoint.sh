@@ -1,9 +1,9 @@
 #!/bin/sh
 set -e
 
-echo "[WhatsUS] Applying database migrations..."
+echo "[WhatsUS] Applying PostgreSQL database migrations via Prisma..."
 cd /app/server
-npx prisma migrate deploy 2>/dev/null || npx prisma db push --skip-generate 2>/dev/null || true
+npx prisma migrate deploy
 
-echo "[WhatsUS] Starting application server..."
+echo "[WhatsUS] Starting production server on port ${PORT:-3001}..."
 exec node dist/index.js

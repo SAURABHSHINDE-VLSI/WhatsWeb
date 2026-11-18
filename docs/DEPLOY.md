@@ -1,82 +1,214 @@
-# WhatsUS Production Deployment & Google OAuth Setup
+# WhatsUS Production Deployment Guide
 
-This document provides step-by-step instructions for configuring Google Sign-In (Google Identity Services) and deploying WhatsUS in production.
-
----
-
-## 1. Google Cloud OAuth 2.0 Web Client Setup
-
-WhatsUS relies on Google Identity Services (GIS) for passwordless, zero-SMS authentication. Accounts are bound to Google's stable `sub` claim.
-
-### Step 1: Create or Open a Google Cloud Project
-1. Navigate to the [Google Cloud Console](https://console.cloud.google.com/).
-2. Select your existing project or create a new project (e.g. `WhatsUs Messenger`).
-
-### Step 2: Configure the OAuth Consent Screen
-1. Go to **APIs & Services** > **OAuth consent screen**.
-2. Select User Type: **External** and click **Create**.
-3. Fill in:
-   - **App name**: `WhatsUS`
-   - **User support email**: Your administrative contact email.
-   - **Developer contact information**: Your administrative contact email.
-4. **Scopes**:
-   - Add only non-sensitive standard identity scopes:
-     - `.../auth/userinfo.email` (`email`)
-     - `.../auth/userinfo.profile` (`profile`)
-     - `openid`
-   - **Do not request any sensitive or restricted scopes.**
-5. **Publishing Status (CRITICAL)**:
-   - By default, Google Cloud marks new OAuth apps as **"Testing"**. While in "Testing", only users explicitly added to the "Test users" list can log in.
-   - **Click "Publish App" and set the status to "In production"**.
-   - Note: Standard identity scopes (`openid`, `email`, `profile`) do **not** require Google verification or CASA tier-2 audits.
-
-### Step 3: Create Web OAuth Client Credentials
-1. Go to **APIs & Services** > **Credentials**.
-2. Click **Create Credentials** > **OAuth client ID**.
-3. Select Application type: **Web application**.
-4. Set Name: `WhatsUS Web Client`.
-5. Under **Authorized JavaScript origins**, add:
-   - Development: `http://localhost:5173`
-   - Development preview: `http://localhost:3001`
-   - Production Domain: `https://129.225.107.71.sslip.io` (or your custom domain)
-6. Under **Authorized redirect URIs**:
-   - Leave blank (Google Identity Services popup/button uses JavaScript postMessage via GIS `ux_mode: popup` or credential callback, no server redirect URI is required).
-7. Click **Create** and copy your **Client ID** (e.g. `1067449631688-lh83oags4uccj9l88q43ns3menofb8tp.apps.googleusercontent.com`).
+This guide describes how to deploy WhatsUS on a single Ubuntu 24.04 VPS with automated HTTPS, PostgreSQL, and optional Coturn TURN integration.
 
 ---
 
-## 2. Server Environment Configuration
+## 1. Prerequisites
 
-Provide `GOOGLE_CLIENT_ID` in your server `.env` or Docker environment:
+- **VPS**: Fresh Ubuntu 24.04 LTS instance (1-2 vCPU, 2-4GB RAM, e.g. Oracle Cloud Free Tier or Hetzner).
+- **Domain Name**: A domain with an `A` record pointing to the VPS public IP address (or a wildcard DNS like `<YOUR-IP>.sslip.io`).
+- **Google Cloud OAuth 2.0 Web Client ID**: Free from Google Cloud Console.
 
-```ini
-NODE_ENV=production
-PORT=3001
-HOST=0.0.0.0
-APP_ORIGIN=https://129.225.107.71.sslip.io
+---
 
-# 32+ byte random cryptographic secret
-JWT_SECRET=your_32_byte_random_cryptographic_secret_here
+## 2. Google Cloud OAuth Setup (Google Sign-In)
 
-# Google OAuth Web Client ID
-GOOGLE_CLIENT_ID=1067449631688-lh83oags4uccj9l88q43ns3menofb8tp.apps.googleusercontent.com
+WhatsUS uses Google Identity Services for zero-knowledge account authentication (using stable Google `sub` claims, never exposing emails to peers).
 
-# Web Push VAPID Keys
-VAPID_PUBLIC_KEY=...
-VAPID_PRIVATE_KEY=...
-VAPID_SUBJECT=mailto:admin@yourdomain.com
+1. Open the [Google Cloud Console](https://console.cloud.google.com/).
+2. Create a new project (e.g., `whatsus-messenger`).
+3. Navigate to **APIs & Services** > **OAuth consent screen**:
+   - User Type: **External**.
+   - App Name: `WhatsUS`.
+   - User support email: your email.
+   - Developer contact email: your email.
+   - Scopes: Add only `openid`, `.../auth/userinfo.email`, and `.../auth/userinfo.profile`. **Do NOT request sensitive or restricted scopes.**
+   - **CRITICAL**: In the OAuth consent screen dashboard, click **Publish App** and set the Publishing status to **In Production**. If left in "Testing", only explicitly allowlisted test Google accounts will be able to log in.
+4. Navigate to **APIs & Services** > **Credentials**:
+   - Click **Create Credentials** > **OAuth client ID**.
+   - Application type: **Web application**.
+   - Name: `WhatsUS Web Client`.
+   - **Authorized JavaScript origins**:
+     - `https://your-domain.com` (your production domain)
+     - `https://<YOUR-IP>.sslip.io` (if using sslip.io)
+     - `http://localhost:5173` (for local client development)
+     - `http://localhost:3001` (for local server preview)
+   - Click **Create**.
+5. Copy your **Client ID** (e.g., `1067449631688-...apps.googleusercontent.com`). You will place this in `.env`.
+
+> [!NOTE]
+> Google Identity Services blocks sign-in within some embedded webviews (e.g. inside Facebook or Instagram in-app browsers). When installed as a standalone PWA on Android (Chrome) and iOS (Safari Add to Home Screen), Google Sign-In operates natively.
+
+---
+
+## 3. Server Provisioning (Ubuntu 24.04)
+
+SSH into your VPS:
+```bash
+ssh ubuntu@YOUR_SERVER_IP
+```
+
+### 3.1. System Updates & Docker Installation
+```bash
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y ca-certificates curl gnupg ufw git
+
+# Install Docker engine and Compose plugin
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+sudo chmod a+r /etc/apt/keyrings/docker.gpg
+
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+  $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+sudo apt update
+sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+# Allow current user to run Docker without sudo
+sudo usermod -aG docker $USER
+newgrp docker
+```
+
+### 3.2. Firewall (UFW) Configuration
+```bash
+sudo ufw default deny incoming
+sudo ufw default allow outgoing
+sudo ufw allow 22/tcp    # SSH
+sudo ufw allow 80/tcp    # HTTP (Caddy ACME)
+sudo ufw allow 443/tcp   # HTTPS (Caddy)
+sudo ufw allow 443/udp   # HTTP/3 QUIC (Caddy)
+
+# Optional: If enabling Coturn TURN/STUN
+sudo ufw allow 3478/tcp
+sudo ufw allow 3478/udp
+sudo ufw allow 5349/tcp
+sudo ufw allow 5349/udp
+sudo ufw allow 49152:49170/udp
+
+sudo ufw --force enable
 ```
 
 ---
 
-## 3. Mobile PWA & Embedded Webview Considerations
+## 4. Application Configuration
 
-- **Google OAuth Embedded Webview Policy**:
-  Google strictly blocks Google Sign-In inside untrusted embedded in-app webviews (such as Facebook, Instagram, or TikTok built-in browsers) returning `disallowed_useragent` error 403.
-- **Standalone PWA on iOS & Android**:
-  When WhatsUS is installed to the home screen as a standalone PWA via Safari ("Add to Home Screen") or Chrome/Android ("Install app"), Google Identity Services runs inside the system browser engine (WebKit/Chromium) with popup support (`ux_mode: popup`).
-- **Testing on Devices**:
-  1. Open `https://129.225.107.71.sslip.io` in Safari on iOS and Chrome on Android.
-  2. Verify the Google "Sign in with Google" button renders properly.
-  3. Verify the sign-in popup opens, prompts for consent, and receives the ID token.
-  4. Verify the server verifies token signature, `aud`, `iss`, and single-use `nonce`.
+### 4.1. Clone Repository
+```bash
+git clone https://github.com/your-username/WhatsWeb.git /opt/whatsus
+cd /opt/whatsus
+```
+
+### 4.2. Generate Secrets
+Generate cryptographically random secrets and VAPID keys:
+```bash
+node scripts/generate-secrets.mjs
+```
+
+### 4.3. Create Production `.env`
+Create `.env` in the repository root:
+```bash
+cp .env.example .env
+nano .env
+```
+
+Fill in the generated values:
+```env
+NODE_ENV=production
+PORT=3001
+HOST=0.0.0.0
+
+# Domain & CORS (Caddy automatically fetches SSL for APP_DOMAIN)
+APP_DOMAIN=129.225.107.71.sslip.io
+APP_ORIGIN=https://129.225.107.71.sslip.io
+ACME_EMAIL=your-email@example.com
+
+# Secrets generated by scripts/generate-secrets.mjs
+JWT_SECRET=your_32_byte_random_jwt_secret_here
+TURN_SECRET=your_32_byte_random_turn_secret_here
+VAPID_PUBLIC_KEY=your_vapid_public_key_here
+VAPID_PRIVATE_KEY=your_vapid_private_key_here
+VAPID_SUBJECT=mailto:your-email@example.com
+
+# Google Sign-In Client ID
+GOOGLE_CLIENT_ID=your-google-client-id.apps.googleusercontent.com
+
+# PostgreSQL Credentials
+POSTGRES_USER=whatsus
+POSTGRES_PASSWORD=generate_a_secure_postgres_password_here
+POSTGRES_DB=whatsus
+DATABASE_URL=postgresql://whatsus:generate_a_secure_postgres_password_here@postgres:5432/whatsus?schema=public
+
+# Message Retention (days before delivered/read & stale queue purged)
+MESSAGE_RETENTION_DAYS=30
+```
+
+---
+
+## 5. Launch Application
+
+Build and start the full production stack:
+```bash
+docker compose up -d --build
+```
+
+Monitor deployment status:
+```bash
+docker compose ps
+docker compose logs -f whatsus
+```
+
+When Caddy starts, it automatically provisions an SSL certificate from Let's Encrypt / ZeroSSL for `APP_DOMAIN`.
+
+Test HTTPS connectivity:
+```bash
+curl -I https://YOUR_DOMAIN/api/health
+```
+
+Output:
+```http
+HTTP/2 200 
+content-type: application/json; charset=utf-8
+...
+{"status":"ok","service":"editorial-messenger-api","googleClientId":"..."}
+```
+
+---
+
+## 6. Upgrades & Maintenance
+
+### 6.1. Deploying New Code
+```bash
+cd /opt/whatsus
+git pull origin main
+docker compose build whatsus
+docker compose up -d whatsus
+```
+The Docker entrypoint automatically applies any pending Prisma migrations on startup before starting the server.
+
+### 6.2. Database Backup
+```bash
+docker compose exec postgres pg_dump -U whatsus whatsus > whatsus_backup_$(date +%Y%m%d_%H%M%S).sql
+```
+
+### 6.3. Database Restore
+```bash
+cat whatsus_backup.sql | docker compose exec -T postgres psql -U whatsus whatsus
+```
+
+---
+
+## 7. Optional Coturn Voice/Video TURN Relay
+
+If users are behind strict symmetric NATs or corporate firewalls where direct WebRTC P2P fails, enable the bundled Coturn container:
+
+```bash
+docker compose --profile turn up -d
+```
+Update `TURN_URLS` in `.env`:
+```env
+TURN_URLS=stun:YOUR_DOMAIN:3478,turn:YOUR_DOMAIN:3478?transport=udp,turn:YOUR_DOMAIN:3478?transport=tcp,turns:YOUR_DOMAIN:5349?transport=tcp
+```
+Then restart the app: `docker compose restart whatsus`.

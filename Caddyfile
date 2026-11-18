@@ -1,0 +1,16 @@
+{
+    # Global options
+    email {$ACME_EMAIL:admin@whatsus.app}
+}
+
+{$APP_DOMAIN:localhost} {
+    encode zstd gzip
+
+    # Proxy all traffic (API, WebSockets, static client bundle) to WhatsUs app
+    reverse_proxy whatsus:3001 {
+        header_up Host {host}
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+    }
+}

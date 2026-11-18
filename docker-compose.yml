@@ -1,26 +1,98 @@
 services:
+  caddy:
+    image: caddy:2-alpine
+    container_name: whatsus-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp" # HTTP/3 QUIC
+    environment:
+      - APP_DOMAIN=${APP_DOMAIN:-129.225.107.71.sslip.io}
+      - ACME_EMAIL=${ACME_EMAIL:-admin@whatsus.app}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      whatsus:
+        condition: service_healthy
+
   whatsus:
     build:
       context: .
       dockerfile: Dockerfile
     image: whatsus:latest
-    container_name: whatsus
+    container_name: whatsus-app
     restart: unless-stopped
-    ports:
-      - "3001:3001"
+    expose:
+      - "3001"
     environment:
       - NODE_ENV=production
       - PORT=3001
       - HOST=0.0.0.0
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-whatsus}:${POSTGRES_PASSWORD:-whatsus_secret}@postgres:5432/${POSTGRES_DB:-whatsus}?schema=public
       - JWT_SECRET=${JWT_SECRET}
-      - APP_ORIGIN=${APP_ORIGIN:-http://localhost:3001}
+      - APP_ORIGIN=${APP_ORIGIN:-https://129.225.107.71.sslip.io}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
       - VAPID_PUBLIC_KEY=${VAPID_PUBLIC_KEY:-}
       - VAPID_PRIVATE_KEY=${VAPID_PRIVATE_KEY:-}
-      - VAPID_SUBJECT=${VAPID_SUBJECT:-mailto:admin@whatsus.app}
+      - VAPID_SUBJECT=${VAPID_SUBJECT:-mailto:security@whatsus.app}
+      - TURN_SECRET=${TURN_SECRET:-}
+      - TURN_URLS=${TURN_URLS:-stun:stun.l.google.com:19302}
+      - MESSAGE_RETENTION_DAYS=${MESSAGE_RETENTION_DAYS:-30}
     volumes:
-      - whatsus-db:/app/server/prisma
-      - whatsus-uploads:/app/server/uploads
+      - whatsus_uploads:/app/server/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3001/api/health').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: whatsus-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-whatsus}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-whatsus_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-whatsus}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-whatsus} -d ${POSTGRES_DB:-whatsus}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  coturn:
+    image: coturn/coturn:4.6.2-alpine
+    container_name: whatsus-coturn
+    restart: unless-stopped
+    ports:
+      - "3478:3478"
+      - "3478:3478/udp"
+      - "5349:5349"
+      - "5349:5349/udp"
+      - "49152-49170:49152-49170/udp"
+    command:
+      - -n
+      - --log-file=stdout
+      - --lt-cred-mech
+      - --use-auth-secret
+      - --static-auth-secret=${TURN_SECRET:-whatsus_turn_secret_dev}
+      - --realm=${APP_DOMAIN:-129.225.107.71.sslip.io}
+      - --min-port=49152
+      - --max-port=49170
+    profiles:
+      - turn
 
 volumes:
-  whatsus-db:
-  whatsus-uploads:
+  postgres_data:
+  whatsus_uploads:
+  caddy_data:
+  caddy_config:
