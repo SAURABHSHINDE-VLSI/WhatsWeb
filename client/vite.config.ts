@@ -77,6 +77,9 @@ export default defineConfig({
             if (id.includes('@tanstack/react-virtual')) {
               return 'vendor-virtual';
             }
+            if (id.includes('minisearch')) {
+              return 'vendor-search';
+            }
             if (id.includes('lucide-react')) {
               return 'vendor-icons';
             }

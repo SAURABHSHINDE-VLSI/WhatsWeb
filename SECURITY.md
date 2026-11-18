@@ -69,6 +69,25 @@ WhatsUS is built with a commitment to **honesty over marketing**. We document ou
 - **Fail-Closed Guarantee**:
   If encryption or decryption fails (e.g., due to key corruption, signature mismatch, or tampering), the message is **never sent** and **never displayed as plaintext**. There is no fallback to unencrypted communication.
 
+- **Link Previews & External URL Protection (v1 Architecture)**:
+  Browsers cannot fetch arbitrary web pages cross-origin due to CORS. Fetching link previews directly on the sender's device without a proxy is technically impossible in a browser, and routing requests through a server proxy would expose target URLs and user IPs to the proxy operator.
+  To eliminate these privacy risks in v1:
+  - WhatsUS performs link detection on the client and displays only the parsed destination domain.
+  - Zero background link scraping or preview fetching is executed by either the server or recipient.
+  - Tapping a link opens an in-app Safety Interstitial modal showing the full URL and destination domain before navigation.
+  - A privacy toggle (`Settings > Privacy > Link previews`, default OFF) is provided as a feature flag for any future user-chosen opt-in proxy.
+
+- **"Delete for Everyone" & Message Editing (Best-Effort Semantics)**:
+  - Message edits (within a 15-minute sender-clock window) and "Delete for everyone" commands are transmitted strictly inside the authenticated Double Ratchet E2EE envelope as control messages.
+  - The recipient client only accepts edits or deletions if the sender of the control message cryptographically matches the sender of the original message.
+  - **Honest Limitation**: Both "Delete for everyone" and the 15-minute edit window are **best-effort**. If a recipient operates a modified client, customized build, or local database backup, they can retain copies of previously received messages and ignore deletion or edit control payloads.
+
+- **Zero-Plaintext In-Memory Search Index**:
+  - The client-side full-text search index (MiniSearch with `Intl.Segmenter`) is maintained purely in memory during an active unlocked session.
+  - The search index is **never stored as plaintext in IndexedDB**.
+  - When messages are deleted, edited, or cleared, the in-memory search index is immediately updated.
+  - The index is destroyed upon logout, session revocation, or application lock.
+
 ---
 
 ## 3. Compromised Secrets Notice & Rotation

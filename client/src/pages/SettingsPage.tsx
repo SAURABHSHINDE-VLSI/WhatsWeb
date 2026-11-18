@@ -4,13 +4,15 @@ import {
   ChevronRight,
   Bell,
   Download,
-  Shield,
   Smartphone,
   LogOut,
   Trash2,
-  Lock,
   Check,
   AlertTriangle,
+  FileDown,
+  UserX,
+  ExternalLink,
+  CheckCheck,
 } from 'lucide-react';
 import { useTheme, ThemePreference } from '../contexts/ThemeContext';
 import { usePWAInstall } from '../hooks/usePWAInstall';
@@ -22,8 +24,12 @@ import {
   apiLogoutOtherSessions,
   apiUpdatePrivacy,
   apiDeleteAccount,
+  apiGetBlockedUsers,
+  apiUnblockUser,
   SessionInfo,
+  User,
 } from '../lib/api';
+import { getDB } from '../lib/db';
 
 export function SettingsPage() {
   const navigate = useNavigate();
@@ -39,6 +45,19 @@ export function SettingsPage() {
   );
   const [isUpdatingPrivacy, setIsUpdatingPrivacy] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  // Phase B Settings
+  const [linkPreviewsEnabled, setLinkPreviewsEnabled] = useState(() => {
+    return localStorage.getItem('whatsus_feature_link_previews') === 'true';
+  });
+
+  const [readReceiptsEnabled, setReadReceiptsEnabled] = useState(() => {
+    return localStorage.getItem('whatsus_read_receipts') !== 'false';
+  });
+
+  const [blockedUsers, setBlockedUsers] = useState<{ id: string; user: User; blockedAt: string }[]>([]);
+  const [showBlockedModal, setShowBlockedModal] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
 
   const themeOptions: { label: string; value: ThemePreference }[] = [
     { label: 'Light', value: 'light' },
@@ -58,9 +77,19 @@ export function SettingsPage() {
     }
   }, []);
 
+  const fetchBlocked = useCallback(async () => {
+    try {
+      const res = await apiGetBlockedUsers();
+      setBlockedUsers(res.blockedUsers);
+    } catch (err) {
+      console.error('Failed to load blocked users', err);
+    }
+  }, []);
+
   useEffect(() => {
     fetchSessions();
-  }, [fetchSessions]);
+    fetchBlocked();
+  }, [fetchSessions, fetchBlocked]);
 
   const handleToggleNotifications = async () => {
     const next = !notificationsEnabled;
@@ -70,6 +99,18 @@ export function SettingsPage() {
     } else {
       await unsubscribePush();
     }
+  };
+
+  const handleToggleLinkPreviews = () => {
+    const next = !linkPreviewsEnabled;
+    setLinkPreviewsEnabled(next);
+    localStorage.setItem('whatsus_feature_link_previews', String(next));
+  };
+
+  const handleToggleReadReceipts = () => {
+    const next = !readReceiptsEnabled;
+    setReadReceiptsEnabled(next);
+    localStorage.setItem('whatsus_read_receipts', String(next));
   };
 
   const handleInstallClick = async () => {
@@ -111,6 +152,63 @@ export function SettingsPage() {
     }
   };
 
+  const handleUnblock = async (targetUserId: string) => {
+    try {
+      await apiUnblockUser(targetUserId);
+      setBlockedUsers((prev) => prev.filter((b) => b.user.id !== targetUserId));
+    } catch (err) {
+      console.error('Failed to unblock user', err);
+    }
+  };
+
+  const handleExportData = async () => {
+    setIsExporting(true);
+    try {
+      const db = await getDB();
+      const chats = await db.getAll('chats');
+      const messages = await db.getAll('messages');
+
+      const exportPayload = {
+        exportDate: new Date().toISOString(),
+        application: 'WhatsUs E2EE Messenger',
+        version: '1.0',
+        user: {
+          id: user?.id,
+          username: user?.username,
+          displayName: user?.displayName,
+          email: user?.email,
+        },
+        chatsCount: chats.length,
+        messagesCount: messages.length,
+        chats,
+        messages: messages.map((m) => ({
+          id: m.id,
+          partnerId: m.partnerId,
+          content: m.content,
+          type: m.type,
+          createdAt: m.createdAt,
+          isSent: m.isSent,
+          isEdited: m.isEdited,
+          isStarred: m.isStarred,
+        })),
+      };
+
+      const blob = new Blob([JSON.stringify(exportPayload, null, 2)], {
+        type: 'application/json',
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `whatsus_data_export_${user?.username || 'account'}_${Date.now()}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      alert(`Export failed: ${err.message || 'Error reading local database'}`);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   const handleDeleteAccount = async () => {
     const prompt = window.prompt(
       'Are you sure you want to permanently delete your account? This will erase all conversations, cryptographic keys, and sessions.\n\nType your @username to confirm:'
@@ -135,6 +233,66 @@ export function SettingsPage() {
 
   return (
     <div className="flex flex-col min-h-full pb-20 select-none" style={{ backgroundColor: 'var(--bg)', color: 'var(--ink)' }}>
+      {/* Blocked Users Modal */}
+      {showBlockedModal && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in"
+          onClick={() => setShowBlockedModal(false)}
+        >
+          <div
+            className="w-full max-w-sm rounded-2xl p-5 shadow-2xl border flex flex-col gap-4 animate-in zoom-in-95 max-h-[80vh]"
+            style={{
+              backgroundColor: 'var(--surface-1)',
+              borderColor: 'var(--line)',
+              color: 'var(--ink)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold">Blocked Contacts</h3>
+              <button
+                type="button"
+                onClick={() => setShowBlockedModal(false)}
+                className="text-xs px-2 py-1 rounded hover:bg-black/5"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto space-y-2 no-scrollbar">
+              {blockedUsers.length === 0 ? (
+                <div className="py-8 text-center text-xs opacity-60">
+                  No blocked contacts.
+                </div>
+              ) : (
+                blockedUsers.map((b) => (
+                  <div
+                    key={b.id}
+                    className="flex items-center justify-between p-2.5 rounded-xl border"
+                    style={{ borderColor: 'var(--line)' }}
+                  >
+                    <div>
+                      <div className="text-xs font-semibold">{b.user.displayName || b.user.username}</div>
+                      <div className="text-[11px] font-mono opacity-70">@{b.user.username}</div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleUnblock(b.user.id)}
+                      className="px-2.5 py-1 text-xs rounded-lg font-medium border hover:bg-black/5"
+                      style={{ borderColor: 'var(--line)' }}
+                    >
+                      Unblock
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Top Header */}
       <header className="px-5 pt-4 pb-2 pt-safe">
         <h1
@@ -183,7 +341,7 @@ export function SettingsPage() {
         </div>
       </div>
 
-      {/* Current Logged-in User Profile Row */}
+      {/* Current User Row */}
       <div
         className="my-2"
         style={{
@@ -235,7 +393,7 @@ export function SettingsPage() {
       {/* Privacy Settings Section */}
       <div className="px-5 mt-4 mb-2">
         <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--muted)' }}>
-          Privacy &amp; Safety
+          Privacy &amp; Permissions
         </span>
       </div>
 
@@ -246,7 +404,8 @@ export function SettingsPage() {
           borderBottom: '1px solid var(--line)',
         }}
       >
-        <div className="px-5 py-3 flex flex-col gap-2.5">
+        {/* Message Permissions: Anyone vs Contacts Only */}
+        <div className="px-5 py-3 flex flex-col gap-2.5 border-b" style={{ borderColor: 'var(--line)' }}>
           <span className="text-xs font-medium" style={{ color: 'var(--ink)' }}>
             Who can message me
           </span>
@@ -300,11 +459,91 @@ export function SettingsPage() {
                   Contacts Only
                 </p>
                 <p className="text-[11px]" style={{ color: 'var(--muted)' }}>
-                  Only people I accepted/invited
+                  Only accepted/invited
                 </p>
               </div>
             </button>
           </div>
+        </div>
+
+        {/* Link Previews Feature Flag Toggle (Default OFF) */}
+        <div
+          className="flex items-center justify-between px-5 py-3 border-b"
+          style={{ borderColor: 'var(--line)' }}
+        >
+          <div className="flex items-center gap-3">
+            <ExternalLink size={18} style={{ color: 'var(--muted)' }} />
+            <div>
+              <div style={{ fontSize: '14px', color: 'var(--ink)' }}>Link Previews</div>
+              <div style={{ fontSize: '11px', color: 'var(--muted)' }}>
+                Feature flag (Off in v1 to prevent IP/URL leakage via proxy)
+              </div>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={handleToggleLinkPreviews}
+            className="w-11 h-6 rounded-full relative transition-colors cursor-pointer"
+            style={{
+              backgroundColor: linkPreviewsEnabled ? 'var(--accent)' : 'var(--line)',
+            }}
+          >
+            <span
+              className="block w-5 h-5 rounded-full transition-transform absolute top-0.5 left-0.5"
+              style={{
+                backgroundColor: 'var(--accent-ink)',
+                transform: linkPreviewsEnabled ? 'translateX(20px)' : 'translateX(0)',
+              }}
+            />
+          </button>
+        </div>
+
+        {/* Read Receipts Toggle */}
+        <div
+          className="flex items-center justify-between px-5 py-3 border-b"
+          style={{ borderColor: 'var(--line)' }}
+        >
+          <div className="flex items-center gap-3">
+            <CheckCheck size={18} style={{ color: 'var(--muted)' }} />
+            <div>
+              <div style={{ fontSize: '14px', color: 'var(--ink)' }}>Read Receipts</div>
+              <div style={{ fontSize: '11px', color: 'var(--muted)' }}>
+                Show double checkmarks when messages are read
+              </div>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={handleToggleReadReceipts}
+            className="w-11 h-6 rounded-full relative transition-colors cursor-pointer"
+            style={{
+              backgroundColor: readReceiptsEnabled ? 'var(--accent)' : 'var(--line)',
+            }}
+          >
+            <span
+              className="block w-5 h-5 rounded-full transition-transform absolute top-0.5 left-0.5"
+              style={{
+                backgroundColor: 'var(--accent-ink)',
+                transform: readReceiptsEnabled ? 'translateX(20px)' : 'translateX(0)',
+              }}
+            />
+          </button>
+        </div>
+
+        {/* Blocked Users */}
+        <div
+          onClick={() => setShowBlockedModal(true)}
+          className="flex items-center justify-between px-5 py-3.5 cursor-pointer hover:bg-black/5 transition-colors"
+        >
+          <div className="flex items-center gap-3">
+            <UserX size={18} style={{ color: 'var(--muted)' }} />
+            <span style={{ fontSize: '14px', color: 'var(--ink)' }}>
+              Blocked Contacts ({blockedUsers.length})
+            </span>
+          </div>
+          <ChevronRight size={18} style={{ color: 'var(--muted)' }} />
         </div>
       </div>
 
@@ -383,7 +622,7 @@ export function SettingsPage() {
         )}
       </div>
 
-      {/* Preferences Group */}
+      {/* Data & Preferences Group */}
       <div
         className="my-2"
         style={{
@@ -391,14 +630,34 @@ export function SettingsPage() {
           borderBottom: '1px solid var(--line)',
         }}
       >
+        {/* Export Data */}
+        <div
+          onClick={handleExportData}
+          className="flex items-center justify-between px-5 py-3.5 cursor-pointer hover:bg-black/5 transition-colors border-b"
+          style={{ borderColor: 'var(--line)' }}
+        >
+          <div className="flex items-center gap-3">
+            <FileDown size={18} style={{ color: 'var(--accent)' }} />
+            <div>
+              <div style={{ fontSize: '14px', color: 'var(--ink)' }}>
+                {isExporting ? 'Exporting...' : 'Export Local Data'}
+              </div>
+              <div style={{ fontSize: '11px', color: 'var(--muted)' }}>
+                Download your decrypted conversations and contact list as JSON
+              </div>
+            </div>
+          </div>
+          <ChevronRight size={18} style={{ color: 'var(--muted)' }} />
+        </div>
+
         {/* Notifications Toggle */}
         <div
-          className="flex items-center justify-between px-5 py-3.5"
-          style={{ borderBottom: '1px solid var(--line)' }}
+          className="flex items-center justify-between px-5 py-3.5 border-b"
+          style={{ borderColor: 'var(--line)' }}
         >
           <div className="flex items-center gap-3">
             <Bell size={18} style={{ color: 'var(--muted)' }} />
-            <span style={{ fontSize: '15px', color: 'var(--ink)' }}>Notifications</span>
+            <span style={{ fontSize: '14px', color: 'var(--ink)' }}>Notifications</span>
           </div>
 
           <button
@@ -422,16 +681,15 @@ export function SettingsPage() {
         {/* PWA Install */}
         <div
           onClick={handleInstallClick}
-          className="flex items-center justify-between px-5 py-3.5 cursor-pointer hover:bg-[var(--surface-2)] transition-colors"
-          style={{ borderBottom: '1px solid var(--line)' }}
+          className="flex items-center justify-between px-5 py-3.5 cursor-pointer hover:bg-black/5 transition-colors"
         >
           <div className="flex items-center gap-3">
             <Download size={18} style={{ color: 'var(--muted)' }} />
             <div>
-              <div style={{ fontSize: '15px', color: 'var(--ink)' }}>
+              <div style={{ fontSize: '14px', color: 'var(--ink)' }}>
                 {isInstalled ? 'App Installed' : 'Add to Home Screen'}
               </div>
-              <div style={{ fontSize: '12px', color: 'var(--muted)' }}>
+              <div style={{ fontSize: '11px', color: 'var(--muted)' }}>
                 {isInstalled ? 'Running as standalone application' : 'Install standalone app'}
               </div>
             </div>
@@ -451,12 +709,12 @@ export function SettingsPage() {
         {/* Log Out */}
         <div
           onClick={logout}
-          className="flex items-center justify-between px-5 py-3.5 cursor-pointer hover:bg-[var(--surface-2)] transition-colors"
-          style={{ borderBottom: '1px solid var(--line)' }}
+          className="flex items-center justify-between px-5 py-3.5 cursor-pointer hover:bg-black/5 transition-colors border-b"
+          style={{ borderColor: 'var(--line)' }}
         >
           <div className="flex items-center gap-3">
             <LogOut size={18} style={{ color: 'var(--muted)' }} />
-            <span style={{ fontSize: '15px', color: 'var(--ink)' }}>Log Out</span>
+            <span style={{ fontSize: '14px', color: 'var(--ink)' }}>Log Out</span>
           </div>
           <ChevronRight size={18} style={{ color: 'var(--muted)' }} />
         </div>
@@ -469,7 +727,7 @@ export function SettingsPage() {
           <div className="flex items-center gap-3">
             <Trash2 size={18} style={{ color: 'var(--heart)' }} />
             <div>
-              <span style={{ fontSize: '15px', color: 'var(--heart)' }}>
+              <span style={{ fontSize: '14px', color: 'var(--heart)' }}>
                 {isDeleting ? 'Erasing Account...' : 'Delete Account'}
               </span>
               <p className="text-[11px]" style={{ color: 'var(--muted)' }}>

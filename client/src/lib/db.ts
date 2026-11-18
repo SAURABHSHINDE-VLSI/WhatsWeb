@@ -20,6 +20,13 @@ export interface LocalMessage {
   reaction?: string;
   createdAt: string;
   isSent: boolean;
+  isEdited?: boolean;
+  editedAt?: string;
+  editCounter?: number;
+  isDeletedForEveryone?: boolean;
+  isStarred?: boolean;
+  voiceDuration?: number;
+  waveform?: number[];
 }
 
 export interface LocalChat {
@@ -228,6 +235,63 @@ export async function updateMessageReactionInDB(id: string, reaction?: string) {
     msg.reaction = reaction;
     await db.put('messages', msg);
   }
+}
+
+export async function updateMessageContentInDB(
+  id: string,
+  newContent: string,
+  editCounter = 1
+): Promise<LocalMessage | null> {
+  const db = await getDB();
+  const msg = await db.get('messages', id);
+  if (msg) {
+    msg.content = newContent;
+    msg.isEdited = true;
+    msg.editedAt = new Date().toISOString();
+    msg.editCounter = editCounter;
+    await db.put('messages', msg);
+    return msg;
+  }
+  return null;
+}
+
+export async function markMessageDeletedForEveryoneInDB(id: string): Promise<LocalMessage | null> {
+  const db = await getDB();
+  const msg = await db.get('messages', id);
+  if (msg) {
+    msg.isDeletedForEveryone = true;
+    msg.content = 'This message was deleted';
+    msg.mediaUrl = undefined;
+    await db.put('messages', msg);
+    return msg;
+  }
+  return null;
+}
+
+export async function toggleStarMessageInDB(id: string): Promise<boolean> {
+  const db = await getDB();
+  const msg = await db.get('messages', id);
+  if (msg) {
+    msg.isStarred = !msg.isStarred;
+    await db.put('messages', msg);
+    return Boolean(msg.isStarred);
+  }
+  return false;
+}
+
+export async function saveDraftToDB(partnerId: string, text: string) {
+  const db = await getDB();
+  if (!text || !text.trim()) {
+    await db.delete('kv', `draft_${partnerId}`);
+  } else {
+    await db.put('kv', text, `draft_${partnerId}`);
+  }
+}
+
+export async function getDraftFromDB(partnerId: string): Promise<string> {
+  const db = await getDB();
+  const draft = await db.get('kv', `draft_${partnerId}`);
+  return typeof draft === 'string' ? draft : '';
 }
 
 export async function clearChatMessagesInDB(partnerId: string) {

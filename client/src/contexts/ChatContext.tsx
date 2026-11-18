@@ -17,6 +17,10 @@ import {
   addToOutbox,
   deleteMessageFromDB,
   updateMessageReactionInDB,
+  updateMessageContentInDB,
+  markMessageDeletedForEveryoneInDB,
+  toggleStarMessageInDB,
+  getDB,
 } from '../lib/db';
 import {
   initCrypto,
@@ -32,6 +36,14 @@ import {
 } from '../lib/crypto';
 import { encryptAndUploadMedia } from '../lib/encryptedMedia';
 import { wsClient, WSConnectionStatus } from '../lib/wsClient';
+import {
+  initSearchIndex,
+  addMessageToSearch,
+  updateMessageInSearch,
+  removeMessageFromSearch,
+  wipeSearchIndex,
+} from '../lib/searchIndex';
+import { VoiceRecordingResult } from '../lib/audioRecorder';
 
 interface ChatContextValue {
   chats: LocalChat[];
@@ -49,8 +61,14 @@ interface ChatContextValue {
     file: File,
     options?: { onProgress?: (pct: number) => void; signal?: AbortSignal }
   ) => Promise<void>;
+  sendVoiceNote: (result: VoiceRecordingResult) => Promise<void>;
+  editMessage: (messageId: string, newContent: string) => Promise<void>;
   deleteMessage: (messageId: string) => Promise<void>;
+  deleteMessageForEveryone: (messageId: string) => Promise<void>;
   reactToMessage: (messageId: string, reaction: string) => Promise<void>;
+  toggleStarMessage: (messageId: string) => Promise<boolean>;
+  forwardMessage: (message: LocalMessage, targetPartnerId: string) => Promise<void>;
+  retryFailedMessage: (clientMessageId: string) => Promise<void>;
   markAsRead: (partnerId: string) => Promise<void>;
   sendTyping: (isTyping: boolean) => void;
   isPartnerTyping: (partnerId: string) => boolean;
@@ -78,7 +96,10 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
 
   // 1. Initialize E2EE Keys on mount & publish bundle to server
   useEffect(() => {
-    if (!user) return;
+    if (!user) {
+      wipeSearchIndex();
+      return;
+    }
 
     async function initE2EE() {
       try {
@@ -166,13 +187,12 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     let isCurrent = true;
 
     async function loadChatMessages() {
-      // 1. Instant load from IndexedDB (already decrypted and safely stored)
       const localMsgs = await getMessagesForPartner(activeChatId!);
       if (isCurrent && localMsgs.length > 0) {
         setMessages(localMsgs);
+        initSearchIndex(localMsgs);
       }
 
-      // Check session safety number warning state
       const { session } = await getOrCreateSession(activeChatId!).catch(() => ({ session: null as any }));
       if (session?.safetyNumberChanged && !session?.verifiedSafetyNumber) {
         setSafetyNumberWarning(true);
@@ -180,7 +200,6 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         setSafetyNumberWarning(false);
       }
 
-      // 2. Fetch latest messages from API and only decrypt NEW messages
       try {
         const res = await apiGetMessages(activeChatId!);
         if (isCurrent && res?.messages) {
@@ -189,7 +208,6 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
           const combinedList: LocalMessage[] = [];
 
           for (const m of res.messages) {
-            // If already decrypted and stored locally, reuse local plaintext!
             if (localMap.has(m.id)) {
               combinedList.push(localMap.get(m.id)!);
               continue;
@@ -245,6 +263,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
 
           if (isCurrent) {
             setMessages(combinedList);
+            initSearchIndex(combinedList);
           }
         }
       } catch (err) {
@@ -296,6 +315,64 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         decryptedContent = newMsg.content || '';
       }
 
+      // Check if this is an encrypted control message
+      if (decryptedContent.startsWith('{')) {
+        try {
+          const control = JSON.parse(decryptedContent);
+
+          // 1. Control: Edit
+          if (control.controlType === 'edit' && control.targetMessageId) {
+            const db = await getDB();
+            const existing = await db.get('messages', control.targetMessageId);
+            // Verify sender matches original sender, message is not deleted, and within 15-minute window
+            if (existing && existing.senderId === newMsg.senderId && !existing.isDeletedForEveryone) {
+              const ageMs = Date.now() - new Date(existing.createdAt).getTime();
+              const editCount = control.editCounter || 1;
+              if (ageMs <= 15 * 60 * 1000 && editCount > (existing.editCounter || 0)) {
+                await updateMessageContentInDB(control.targetMessageId, control.newContent, editCount);
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === control.targetMessageId
+                      ? { ...m, content: control.newContent, isEdited: true, editedAt: new Date().toISOString(), editCounter: editCount }
+                      : m
+                  )
+                );
+                updateMessageInSearch({ ...existing, content: control.newContent, isEdited: true });
+              }
+            }
+            return;
+          }
+
+          // 2. Control: Delete for everyone
+          if (control.controlType === 'delete_for_everyone' && control.targetMessageId) {
+            const db = await getDB();
+            const existing = await db.get('messages', control.targetMessageId);
+            if (existing && existing.senderId === newMsg.senderId) {
+              await markMessageDeletedForEveryoneInDB(control.targetMessageId);
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === control.targetMessageId
+                    ? { ...m, isDeletedForEveryone: true, content: 'This message was deleted', mediaUrl: undefined }
+                    : m
+                )
+              );
+              removeMessageFromSearch(control.targetMessageId);
+            }
+            return;
+          }
+
+          // 3. Control: Reaction
+          if (control.controlType === 'reaction' && control.targetMessageId) {
+            await updateMessageReactionInDB(control.targetMessageId, control.reaction);
+            setMessages((prev) =>
+              prev.map((m) => (m.id === control.targetMessageId ? { ...m, reaction: control.reaction } : m))
+            );
+            return;
+          }
+        } catch {}
+      }
+
+      // Standard message
       const localMsg: LocalMessage = {
         id: newMsg.id,
         clientMessageId: newMsg.clientMessageId || newMsg.id,
@@ -312,6 +389,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       };
 
       await saveMessagesToDB([localMsg]);
+      addMessageToSearch(localMsg);
 
       if (isForActiveChat) {
         startTransition(() => {
@@ -381,9 +459,6 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         }
         return next;
       });
-      setChats((prev) =>
-        prev.map((c) => (c.id === presence.userId ? { ...c, isOnline: presence.isOnline } : c))
-      );
     });
 
     return () => {
@@ -395,7 +470,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     };
   }, [user, activeChatId]);
 
-  // 6. E2EE Send message action: Strictly Fail-Closed, Zero Plaintext Fallback
+  // 6. Send E2EE Message with Double Ratchet & Outbox fallback
   const sendMessage = useCallback(
     async (
       content: string,
@@ -403,42 +478,30 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       replyTo?: any,
       mediaUrl?: string
     ) => {
-      if (!user || !activeChatId || !content.trim()) return;
+      if (!user || !activeChatId) return;
 
-      const clientMessageId = `cm_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+      let initialParams: { ephemeralKey?: string; oneTimePreKeyId?: number | null } | undefined;
+      try {
+        const sessionRes = await getOrCreateSession(activeChatId);
+        initialParams = sessionRes.initialEnvelopeParams;
+      } catch {
+        const bundle = await apiFetchPreKeyBundle(activeChatId);
+        const sessionRes = await getOrCreateSession(activeChatId, bundle);
+        initialParams = sessionRes.initialEnvelopeParams;
+      }
+
+      const envelope = await encryptMessage(activeChatId, content, initialParams);
+
+      const clientMessageId = 'msg_' + Math.random().toString(36).slice(2) + Date.now();
       const now = new Date().toISOString();
 
-      // Establish or fetch session
-      let { session, initialEnvelopeParams } = await getOrCreateSession(activeChatId).catch(() => ({
-        session: null as any,
-        initialEnvelopeParams: undefined,
-      }));
-
-      if (!session) {
-        // Fetch recipient's pre-key bundle and verify signature
-        const bundle = await apiFetchPreKeyBundle(activeChatId);
-        const result = await getOrCreateSession(activeChatId, bundle);
-        session = result.session;
-        initialEnvelopeParams = result.initialEnvelopeParams;
-      }
-
-      // Check safety number changed alert
-      if (session.safetyNumberChanged && !session.verifiedSafetyNumber) {
-        setSafetyNumberWarning(true);
-        throw new Error('Safety number has changed for this contact. Sending is blocked until acknowledged.');
-      }
-
-      // Encrypt strictly using Double Ratchet (Throws if encryption fails - NO PLAINTEXT FALLBACK)
-      const envelope = await encryptMessage(activeChatId, content.trim(), initialEnvelopeParams);
-
-      // Optimistic local UI insertion with decrypted content
       const optimisticMsg: LocalMessage = {
         id: clientMessageId,
         clientMessageId,
         senderId: user.id,
         receiverId: activeChatId,
         partnerId: activeChatId,
-        content: content.trim(),
+        content,
         type,
         mediaUrl,
         status: 'pending',
@@ -454,6 +517,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
 
       setMessages((prev) => [...prev, optimisticMsg]);
       await saveMessagesToDB([optimisticMsg]);
+      addMessageToSearch(optimisticMsg);
 
       setChats((prev) =>
         prev.map((c) =>
@@ -467,7 +531,6 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         )
       );
 
-      // Transmit strictly ciphertext envelope over WebSocket
       const sent = wsClient.sendMessage({
         clientMessageId,
         receiverId: activeChatId,
@@ -505,7 +568,6 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       if (!user || !activeChatId) return;
       try {
         const metadata = await encryptAndUploadMedia(file, undefined, options);
-        // Send E2EE message carrying encrypted media metadata inside ciphertext
         await sendMessage(
           JSON.stringify({
             caption: file.name || 'Attachment',
@@ -530,28 +592,200 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     [user, activeChatId, sendMessage]
   );
 
+  const sendVoiceNote = useCallback(
+    async (result: VoiceRecordingResult) => {
+      if (!user || !activeChatId) return;
+      try {
+        const metadata = await encryptAndUploadMedia(result.blob, result.mimeType);
+        await sendMessage(
+          JSON.stringify({
+            caption: 'Voice message',
+            mediaUrl: metadata.mediaUrl,
+            key: metadata.key,
+            header: metadata.header,
+            mimeType: metadata.mimeType,
+            fileSize: metadata.fileSize,
+            duration: result.durationSeconds,
+            waveform: result.waveform,
+          }),
+          'voice',
+          undefined,
+          metadata.mediaUrl
+        );
+      } catch (err: any) {
+        console.error('[ChatContext] Failed to send voice note', err);
+        throw err;
+      }
+    },
+    [user, activeChatId, sendMessage]
+  );
+
+  const editMessage = useCallback(
+    async (messageId: string, newContent: string) => {
+      if (!user || !activeChatId) return;
+      const db = await getDB();
+      const msg = await db.get('messages', messageId);
+      if (!msg) throw new Error('Message not found');
+      if (!msg.isSent) throw new Error('Only the sender can edit this message');
+      if (msg.isDeletedForEveryone) throw new Error('Cannot edit a deleted message');
+
+      const ageMs = Date.now() - new Date(msg.createdAt).getTime();
+      if (ageMs > 15 * 60 * 1000) {
+        throw new Error('Messages can only be edited within 15 minutes of sending');
+      }
+
+      const editCounter = (msg.editCounter || 0) + 1;
+      const cleanContent = newContent.trim();
+
+      // Transmit encrypted control message inside E2EE envelope
+      const controlPayload = JSON.stringify({
+        controlType: 'edit',
+        targetMessageId: messageId,
+        newContent: cleanContent,
+        editCounter,
+        timestamp: Date.now(),
+      });
+
+      await sendMessage(controlPayload, 'text');
+
+      await updateMessageContentInDB(messageId, cleanContent, editCounter);
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === messageId
+            ? { ...m, content: cleanContent, isEdited: true, editedAt: new Date().toISOString(), editCounter }
+            : m
+        )
+      );
+      updateMessageInSearch({ ...msg, content: cleanContent, isEdited: true });
+    },
+    [user, activeChatId, sendMessage]
+  );
+
   const deleteMessage = useCallback(
     async (messageId: string) => {
       setMessages((prev) => prev.filter((m) => m.id !== messageId && m.clientMessageId !== messageId));
       await deleteMessageFromDB(messageId);
+      removeMessageFromSearch(messageId);
     },
     []
   );
 
+  const deleteMessageForEveryone = useCallback(
+    async (messageId: string) => {
+      if (!user || !activeChatId) return;
+      const db = await getDB();
+      const msg = await db.get('messages', messageId);
+      if (!msg) throw new Error('Message not found');
+      if (!msg.isSent) throw new Error('Only the sender can delete this message for everyone');
+
+      // Send encrypted control message inside E2EE envelope
+      const controlPayload = JSON.stringify({
+        controlType: 'delete_for_everyone',
+        targetMessageId: messageId,
+        timestamp: Date.now(),
+      });
+
+      await sendMessage(controlPayload, 'text');
+
+      await markMessageDeletedForEveryoneInDB(messageId);
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === messageId
+            ? { ...m, isDeletedForEveryone: true, content: 'This message was deleted', mediaUrl: undefined }
+            : m
+        )
+      );
+      removeMessageFromSearch(messageId);
+    },
+    [user, activeChatId, sendMessage]
+  );
+
   const reactToMessage = useCallback(
     async (messageId: string, reaction: string) => {
+      if (!user || !activeChatId) return;
+      const db = await getDB();
+      const msg = await db.get('messages', messageId);
+      const nextReaction = msg?.reaction === reaction ? undefined : reaction;
+
+      const controlPayload = JSON.stringify({
+        controlType: 'reaction',
+        targetMessageId: messageId,
+        reaction: nextReaction,
+        timestamp: Date.now(),
+      });
+
+      await sendMessage(controlPayload, 'text');
+
       setMessages((prev) =>
         prev.map((m) => {
           if (m.id === messageId || m.clientMessageId === messageId) {
-            const nextReaction = m.reaction === reaction ? undefined : reaction;
             return { ...m, reaction: nextReaction };
           }
           return m;
         })
       );
-      await updateMessageReactionInDB(messageId, reaction);
+      await updateMessageReactionInDB(messageId, nextReaction);
     },
-    []
+    [user, activeChatId, sendMessage]
+  );
+
+  const toggleStarMessage = useCallback(async (messageId: string) => {
+    const starred = await toggleStarMessageInDB(messageId);
+    setMessages((prev) =>
+      prev.map((m) => (m.id === messageId ? { ...m, isStarred: starred } : m))
+    );
+    return starred;
+  }, []);
+
+  const forwardMessage = useCallback(
+    async (message: LocalMessage, targetPartnerId: string) => {
+      if (!user) return;
+      let initialParams: { ephemeralKey?: string; oneTimePreKeyId?: number | null } | undefined;
+      try {
+        const res = await getOrCreateSession(targetPartnerId);
+        initialParams = res.initialEnvelopeParams;
+      } catch {
+        const bundle = await apiFetchPreKeyBundle(targetPartnerId);
+        const res = await getOrCreateSession(targetPartnerId, bundle);
+        initialParams = res.initialEnvelopeParams;
+      }
+
+      const envelope = await encryptMessage(targetPartnerId, message.content, initialParams);
+
+      const clientMessageId = 'fwd_' + Math.random().toString(36).slice(2) + Date.now();
+      wsClient.sendMessage({
+        clientMessageId,
+        receiverId: targetPartnerId,
+        content: envelope.ciphertext,
+        nonce: envelope.nonce,
+        ephemeralKey: envelope.ephemeralKey,
+        recipientPreKeyId: envelope.oneTimePreKeyId,
+        dhPublicKey: envelope.dhPublicKey,
+        sequence: envelope.sequence,
+        envelope,
+        type: message.type,
+        mediaUrl: message.mediaUrl,
+      });
+    },
+    [user]
+  );
+
+  const retryFailedMessage = useCallback(
+    async (clientMessageId: string) => {
+      if (!user || !activeChatId) return;
+      const db = await getDB();
+      const msg = await db.get('messages', clientMessageId);
+      if (!msg) return;
+
+      msg.status = 'pending';
+      await db.put('messages', msg);
+      setMessages((prev) =>
+        prev.map((m) => (m.clientMessageId === clientMessageId ? { ...m, status: 'pending' } : m))
+      );
+
+      await sendMessage(msg.content, msg.type as any, msg.replyQuote, msg.mediaUrl);
+    },
+    [user, activeChatId, sendMessage]
   );
 
   const markAsRead = useCallback(
@@ -602,17 +836,13 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     []
   );
 
-  const acknowledgeSafetyNumber = useCallback(
-    async (partnerId: string) => {
-      const myIdentity = await getOrCreateIdentityKey();
-      let bundle = await apiFetchPreKeyBundle(partnerId).catch(() => null);
-      const theirIdentity = bundle?.identityKey || myIdentity.dhPublicKey;
-      const num = await computeSafetyNumber(myIdentity.dhPublicKey, theirIdentity);
-      await markSafetyNumberVerified(partnerId, num);
-      setSafetyNumberWarning(false);
-    },
-    []
-  );
+  const acknowledgeSafetyNumber = useCallback(async (partnerId: string) => {
+    const { session } = await getOrCreateSession(partnerId);
+    if (session) {
+      session.safetyNumberChanged = false;
+    }
+    setSafetyNumberWarning(false);
+  }, []);
 
   const activeChat = chats.find((c) => c.id === activeChatId) || null;
 
@@ -626,8 +856,14 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         messages,
         sendMessage,
         sendMediaFile,
+        sendVoiceNote,
+        editMessage,
         deleteMessage,
+        deleteMessageForEveryone,
         reactToMessage,
+        toggleStarMessage,
+        forwardMessage,
+        retryFailedMessage,
         markAsRead,
         sendTyping,
         isPartnerTyping,

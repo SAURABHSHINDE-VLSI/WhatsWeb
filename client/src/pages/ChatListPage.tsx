@@ -1,9 +1,10 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Lock, SquarePen, Pin, Mic, Image, BellOff, Inbox, UserPlus } from 'lucide-react';
+import { Lock, SquarePen, Pin, Mic, Image, BellOff, Inbox, UserPlus, Search, MessageSquare } from 'lucide-react';
 import { useChat } from '../contexts/ChatContext';
 import { apiGetContactRequests } from '../lib/api';
 import { ConnectionBanner } from '../components/ConnectionBanner';
+import { searchLocalMessages, SearchResultItem } from '../lib/searchIndex';
 
 export function ChatListPage() {
   const navigate = useNavigate();
@@ -47,16 +48,25 @@ export function ChatListPage() {
     });
   }, [liveChats]);
 
+  // Search contacts and encrypted in-memory messages
+  const matchingMessages = useMemo<SearchResultItem[]>(() => {
+    if (!searchQuery.trim()) return [];
+    return searchLocalMessages(searchQuery);
+  }, [searchQuery]);
+
   const filteredChats = useMemo(() => {
     if (!searchQuery.trim()) return formattedChats;
     const q = searchQuery.toLowerCase();
+    const messagePartnerIds = new Set(matchingMessages.map((m) => m.partnerId));
+
     return formattedChats.filter(
       (chat) =>
         chat.name.toLowerCase().includes(q) ||
         (chat.username && chat.username.toLowerCase().includes(q)) ||
-        chat.snippet.toLowerCase().includes(q)
+        chat.snippet.toLowerCase().includes(q) ||
+        messagePartnerIds.has(chat.id)
     );
-  }, [formattedChats, searchQuery]);
+  }, [formattedChats, searchQuery, matchingMessages]);
 
   return (
     <div className="flex flex-col min-h-full" style={{ backgroundColor: 'var(--bg)', color: 'var(--ink)' }}>
@@ -98,7 +108,7 @@ export function ChatListPage() {
           <button
             type="button"
             onClick={() => navigate('/requests')}
-            className="w-full flex items-center justify-between px-3.5 py-2 rounded-xl text-xs font-semibold cursor-pointer transition-colors shadow-sm"
+            className="w-full flex items-center justify-between px-3.5 py-2 rounded-xl text-xs font-semibold cursor-pointer transition-colors shadow-xs"
             style={{
               backgroundColor: 'var(--surface-1)',
               border: '1px solid var(--accent)',
@@ -107,13 +117,16 @@ export function ChatListPage() {
           >
             <div className="flex items-center gap-2">
               <Inbox size={15} />
-              <span>{pendingRequestsCount} Pending Message {pendingRequestsCount === 1 ? 'Request' : 'Requests'}</span>
+              <span>Pending Message Requests</span>
             </div>
             <span
               className="px-2 py-0.5 rounded-full text-[11px] font-bold"
-              style={{ backgroundColor: 'var(--accent)', color: 'var(--accent-ink)' }}
+              style={{
+                backgroundColor: 'var(--accent)',
+                color: 'var(--accent-ink)',
+              }}
             >
-              Review
+              {pendingRequestsCount}
             </span>
           </button>
         </div>
@@ -134,23 +147,32 @@ export function ChatListPage() {
         </div>
       </div>
 
-      {/* Search Input */}
+      {/* Search Input with honest in-memory device-only privacy label */}
       {formattedChats.length > 0 && (
         <div className="px-5 pb-3">
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search conversations..."
-            className="w-full px-3.5 py-2 text-sm outline-none transition-colors"
+          <div
+            className="flex items-center gap-2 px-3 py-2 rounded-xl border transition-all"
             style={{
               backgroundColor: 'var(--surface-1)',
-              color: 'var(--ink)',
-              borderRadius: 'var(--radius-sm)',
-              border: '1px solid var(--line)',
-              fontFamily: 'var(--font-sans)',
+              borderColor: 'var(--line)',
             }}
-          />
+          >
+            <Search size={15} style={{ color: 'var(--muted)' }} />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search conversations..."
+              className="w-full text-xs outline-none bg-transparent"
+              style={{
+                color: 'var(--ink)',
+                fontFamily: 'var(--font-sans)',
+              }}
+            />
+          </div>
+          <div className="text-[10px] mt-1 px-1" style={{ color: 'var(--muted)' }}>
+            Searches messages on this device only
+          </div>
         </div>
       )}
 
@@ -159,7 +181,7 @@ export function ChatListPage() {
         {formattedChats.length === 0 ? (
           <div className="flex flex-col items-center justify-center my-auto py-20 px-6 text-center gap-4">
             <div
-              className="w-16 h-16 rounded-2xl flex items-center justify-center shadow-sm"
+              className="w-16 h-16 rounded-2xl flex items-center justify-center shadow-xs"
               style={{
                 backgroundColor: 'var(--surface-1)',
                 color: 'var(--accent)',
@@ -198,124 +220,128 @@ export function ChatListPage() {
             </button>
           </div>
         ) : (
-          filteredChats.map((chat) => {
-            const isUnread = Boolean(chat.unreadCount && chat.unreadCount > 0);
-            const isOnline = isUserOnline(chat.id);
+          <div className="divide-y" style={{ borderColor: 'var(--line)' }}>
+            {filteredChats.map((chat) => {
+              const isOnline = isUserOnline(chat.id);
+              const matchingMsg = matchingMessages.find((m) => m.partnerId === chat.id);
 
-            return (
-              <div
-                key={chat.id}
-                role="button"
-                tabIndex={0}
-                onClick={() => navigate(`/chat/${chat.id}`)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') navigate(`/chat/${chat.id}`);
-                }}
-                className="flex items-center gap-3.5 px-5 py-3 transition-colors cursor-pointer select-none"
-                style={{
-                  borderBottom: '1px solid var(--line)',
-                  backgroundColor: 'transparent',
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = 'var(--surface-2)';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = 'transparent';
-                }}
-              >
-                {/* Avatar with warm tint and optional online dot */}
-                <div className="relative shrink-0">
-                  <div
-                    className="flex items-center justify-center select-none"
-                    style={{
-                      width: '46px',
-                      height: '46px',
-                      borderRadius: 'var(--radius-full)',
-                      backgroundColor: `var(--${chat.tint})`,
-                      color: 'var(--ink)',
-                      fontFamily: 'var(--font-serif)',
-                      fontSize: '16px',
-                      fontWeight: 500,
-                    }}
-                  >
-                    {chat.initials}
-                  </div>
-                  {isOnline && (
-                    <span
-                      title="Online"
-                      className="absolute bottom-0 right-0 w-3 h-3 rounded-full border-2"
+              return (
+                <div
+                  key={chat.id}
+                  onClick={() => navigate(`/chat/${chat.id}`)}
+                  className="flex items-center gap-3 px-5 py-3 cursor-pointer transition-colors hover:bg-black/5 active:bg-black/10 select-none relative"
+                >
+                  {/* Monogram Avatar with Online Ring */}
+                  <div className="relative shrink-0">
+                    <div
+                      className="flex items-center justify-center select-none"
                       style={{
-                        backgroundColor: 'var(--accent)',
-                        borderColor: 'var(--bg)',
-                      }}
-                    />
-                  )}
-                </div>
-
-                {/* Chat details */}
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-baseline justify-between mb-0.5">
-                    <span
-                      className="truncate flex items-center gap-1.5"
-                      style={{
+                        width: '46px',
+                        height: '46px',
+                        borderRadius: 'var(--radius-full)',
+                        backgroundColor: `var(--${chat.tint}, #D9CDB8)`,
+                        color: '#1D1B18',
                         fontFamily: 'var(--font-serif)',
-                        fontSize: 'var(--text-chat-name)',
-                        letterSpacing: '-0.01em',
-                        fontWeight: isUnread ? 600 : 500,
-                        color: 'var(--ink)',
+                        fontSize: '17px',
+                        fontWeight: 600,
                       }}
                     >
-                      {chat.name}
-                      {chat.isPinned && <Pin size={12} style={{ color: 'var(--muted)' }} />}
-                      {chat.isMuted && <BellOff size={12} style={{ color: 'var(--muted)' }} />}
-                    </span>
+                      {chat.initials}
+                    </div>
 
-                    <span
-                      className="tnum shrink-0 ml-2"
-                      style={{
-                        fontSize: 'var(--text-meta)',
-                        color: isUnread ? 'var(--accent)' : 'var(--muted)',
-                        fontWeight: isUnread ? 500 : 400,
-                      }}
-                    >
-                      {chat.time}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-between gap-2">
-                    <p
-                      className="truncate flex items-center gap-1 text-sm"
-                      style={{
-                        color: isUnread ? 'var(--ink)' : 'var(--muted)',
-                        fontWeight: isUnread ? 500 : 400,
-                      }}
-                    >
-                      {chat.hasVoice && <Mic size={13} style={{ color: 'var(--accent)' }} />}
-                      {chat.hasPhoto && <Image size={13} style={{ color: 'var(--muted)' }} />}
-                      <span className="truncate">{chat.snippet}</span>
-                    </p>
-
-                    {isUnread && (
+                    {isOnline && (
                       <span
-                        className="shrink-0 flex items-center justify-center font-medium text-xs tnum"
+                        className="absolute bottom-0 right-0 w-3 h-3 rounded-full border-2"
                         style={{
                           backgroundColor: 'var(--accent)',
-                          color: 'var(--accent-ink)',
-                          borderRadius: 'var(--radius-full)',
-                          minWidth: '18px',
-                          height: '18px',
-                          padding: '0 5px',
-                          fontSize: '11px',
+                          borderColor: 'var(--bg)',
                         }}
-                      >
-                        {chat.unreadCount}
-                      </span>
+                        title="Online"
+                      />
                     )}
                   </div>
+
+                  {/* Contact Info & Message Preview */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-baseline justify-between gap-2">
+                      <div className="flex items-center gap-1.5 truncate">
+                        <span
+                          className="truncate"
+                          style={{
+                            fontFamily: 'var(--font-serif)',
+                            fontSize: 'var(--text-contact-name)',
+                            fontWeight: 500,
+                            letterSpacing: '-0.01em',
+                            color: 'var(--ink)',
+                          }}
+                        >
+                          {chat.name}
+                        </span>
+                        {chat.isPinned && (
+                          <Pin size={12} className="rotate-45 shrink-0 opacity-60" />
+                        )}
+                        {chat.isMuted && (
+                          <BellOff size={12} className="shrink-0 opacity-40" />
+                        )}
+                      </div>
+
+                      <span
+                        className="shrink-0 text-right tnum"
+                        style={{
+                          fontSize: 'var(--text-meta)',
+                          color: chat.unreadCount > 0 ? 'var(--accent)' : 'var(--muted)',
+                          fontWeight: chat.unreadCount > 0 ? 600 : 400,
+                        }}
+                      >
+                        {chat.time}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between gap-2 mt-0.5">
+                      <div
+                        className="text-xs truncate flex items-center gap-1"
+                        style={{
+                          color: matchingMsg ? 'var(--accent)' : chat.unreadCount > 0 ? 'var(--ink)' : 'var(--muted)',
+                          fontWeight: chat.unreadCount > 0 || matchingMsg ? 500 : 400,
+                        }}
+                      >
+                        {matchingMsg ? (
+                          <>
+                            <MessageSquare size={12} className="shrink-0" />
+                            <span className="truncate italic">Match: "{matchingMsg.snippet}"</span>
+                          </>
+                        ) : (
+                          <>
+                            {chat.hasVoice && <Mic size={13} className="shrink-0 opacity-75" />}
+                            {chat.hasPhoto && <Image size={13} className="shrink-0 opacity-75" />}
+                            <span className="truncate">{chat.snippet}</span>
+                          </>
+                        )}
+                      </div>
+
+                      {chat.unreadCount > 0 && (
+                        <div
+                          className="flex items-center justify-center shrink-0"
+                          style={{
+                            minWidth: '18px',
+                            height: '18px',
+                            padding: '0 5px',
+                            borderRadius: 'var(--radius-full)',
+                            backgroundColor: 'var(--accent)',
+                            color: 'var(--accent-ink)',
+                            fontSize: '11px',
+                            fontWeight: 600,
+                          }}
+                        >
+                          {chat.unreadCount}
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
-              </div>
-            );
-          })
+              );
+            })}
+          </div>
         )}
       </div>
     </div>

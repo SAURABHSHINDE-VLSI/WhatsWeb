@@ -1,9 +1,108 @@
+import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ChevronLeft, MessageSquare, Phone, Video, Bell, Shield, Image, FileText } from 'lucide-react';
+import {
+  ChevronLeft,
+  MessageSquare,
+  Phone,
+  Video,
+  Shield,
+  Image,
+  UserX,
+  FileText,
+} from 'lucide-react';
+import { useChat } from '../contexts/ChatContext';
+import { useCall } from '../contexts/CallContext';
+import { apiLookupUser, apiBlockUser, apiUnblockUser } from '../lib/api';
+import { getMessagesForPartner } from '../lib/db';
 
 export function ProfilePage() {
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
+  const partnerId = id || '';
+
+  const { chats, isUserOnline } = useChat();
+  const { startCall } = useCall();
+
+  const [contactInfo, setContactInfo] = useState<{
+    id: string;
+    username: string;
+    displayName: string;
+    tint: number;
+    avatarUrl?: string | null;
+  } | null>(null);
+  const [mediaCount, setMediaCount] = useState(0);
+  const [isBlocked, setIsBlocked] = useState(false);
+  const [isUpdatingBlock, setIsUpdatingBlock] = useState(false);
+
+  useEffect(() => {
+    if (!partnerId) return;
+
+    // Check if in active chats first
+    const chat = chats.find((c) => c.id === partnerId);
+    if (chat) {
+      setContactInfo({
+        id: chat.id,
+        username: chat.username,
+        displayName: chat.name,
+        tint: chat.tint,
+        avatarUrl: chat.avatarUrl,
+      });
+    } else {
+      // Look up contact via API
+      apiLookupUser(partnerId)
+        .then((res) => {
+          if (res.user) {
+            setContactInfo({
+              id: res.user.id,
+              username: res.user.username || 'unknown',
+              displayName: res.user.displayName || res.user.username || 'Contact',
+              tint: res.user.avatarTint || 0,
+              avatarUrl: res.user.avatarUrl,
+            });
+          }
+        })
+        .catch(() => {});
+    }
+
+    // Count shared media from IndexedDB
+    getMessagesForPartner(partnerId)
+      .then((msgs) => {
+        const count = msgs.filter((m) => m.type === 'photo' || m.type === 'voice').length;
+        setMediaCount(count);
+      })
+      .catch(() => {});
+  }, [partnerId, chats]);
+
+  const handleToggleBlock = async () => {
+    if (!contactInfo || isUpdatingBlock) return;
+    setIsUpdatingBlock(true);
+    try {
+      if (isBlocked) {
+        await apiUnblockUser(contactInfo.id);
+        setIsBlocked(false);
+      } else {
+        if (window.confirm(`Block @${contactInfo.username}? They will no longer be able to message or call you.`)) {
+          await apiBlockUser(contactInfo.id);
+          setIsBlocked(true);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to update block state', err);
+    } finally {
+      setIsUpdatingBlock(false);
+    }
+  };
+
+  const displayName = contactInfo?.displayName || 'Contact';
+  const username = contactInfo?.username || 'user';
+  const tint = contactInfo?.tint || 0;
+  const initials = displayName
+    .split(' ')
+    .map((p) => p[0])
+    .join('')
+    .slice(0, 2)
+    .toUpperCase();
+  const isOnline = isUserOnline(partnerId);
 
   return (
     <div
@@ -51,14 +150,14 @@ export function ProfilePage() {
             width: '80px',
             height: '80px',
             borderRadius: 'var(--radius-full)',
-            backgroundColor: 'var(--tint-1)',
-            color: 'var(--ink)',
+            backgroundColor: `var(--tint-${(tint % 4) + 1}, #D9CDB8)`,
+            color: '#1D1B18',
             fontFamily: 'var(--font-serif)',
             fontSize: '28px',
-            fontWeight: 500,
+            fontWeight: 600,
           }}
         >
-          ML
+          {initials}
         </div>
 
         <h1
@@ -70,19 +169,23 @@ export function ProfilePage() {
             color: 'var(--ink)',
           }}
         >
-          Maya Lin
+          {displayName}
         </h1>
 
-        <p className="tnum mt-1" style={{ fontSize: '13px', color: 'var(--muted)' }}>
-          +1 (555) 382-9102
+        <p className="font-mono text-xs mt-1" style={{ color: 'var(--muted)' }}>
+          @{username}
+        </p>
+
+        <p className="text-xs mt-0.5" style={{ color: isOnline ? 'var(--accent)' : 'var(--muted)' }}>
+          {isOnline ? 'Online now' : 'Signal E2EE Active'}
         </p>
 
         {/* Action Buttons Row */}
         <div className="flex items-center justify-center gap-3 mt-5 w-full max-w-xs">
           <button
             type="button"
-            onClick={() => navigate(`/chat/${id || '1'}`)}
-            className="flex-1 flex flex-col items-center gap-1.5 py-2.5 px-2 rounded-xl transition-all cursor-pointer"
+            onClick={() => navigate(`/chat/${partnerId}`)}
+            className="flex-1 flex flex-col items-center gap-1.5 py-2.5 px-2 rounded-xl transition-all cursor-pointer hover:bg-black/5"
             style={{
               backgroundColor: 'var(--surface-1)',
               color: 'var(--ink)',
@@ -94,7 +197,8 @@ export function ProfilePage() {
 
           <button
             type="button"
-            className="flex-1 flex flex-col items-center gap-1.5 py-2.5 px-2 rounded-xl transition-all cursor-pointer"
+            onClick={() => startCall(partnerId, displayName, tint, 'voice')}
+            className="flex-1 flex flex-col items-center gap-1.5 py-2.5 px-2 rounded-xl transition-all cursor-pointer hover:bg-black/5"
             style={{
               backgroundColor: 'var(--surface-1)',
               color: 'var(--ink)',
@@ -106,7 +210,8 @@ export function ProfilePage() {
 
           <button
             type="button"
-            className="flex-1 flex flex-col items-center gap-1.5 py-2.5 px-2 rounded-xl transition-all cursor-pointer"
+            onClick={() => startCall(partnerId, displayName, tint, 'video')}
+            className="flex-1 flex flex-col items-center gap-1.5 py-2.5 px-2 rounded-xl transition-all cursor-pointer hover:bg-black/5"
             style={{
               backgroundColor: 'var(--surface-1)',
               color: 'var(--ink)',
@@ -126,25 +231,35 @@ export function ProfilePage() {
           borderBottom: '1px solid var(--line)',
         }}
       >
-        <div className="px-5 py-3.5" style={{ borderBottom: '1px solid var(--line)' }}>
-          <div style={{ fontSize: '12px', color: 'var(--muted)', marginBottom: '4px' }}>
-            About
+        <div
+          onClick={() => navigate(`/security/${partnerId}`)}
+          className="flex items-center justify-between px-5 py-3.5 cursor-pointer hover:bg-black/5 transition-colors border-b"
+          style={{ borderColor: 'var(--line)' }}
+        >
+          <div className="flex items-center gap-3">
+            <Shield size={18} style={{ color: 'var(--accent)' }} />
+            <div>
+              <div style={{ fontSize: '15px', color: 'var(--ink)' }}>Encryption &amp; Safety Number</div>
+              <div style={{ fontSize: '12px', color: 'var(--muted)' }}>
+                Verify cryptographic identity &amp; scan QR
+              </div>
+            </div>
           </div>
-          <div style={{ fontSize: '15px', color: 'var(--ink)' }}>
-            Architectural designer · Reading monograph notes
-          </div>
+          <FileText size={16} style={{ color: 'var(--muted)' }} />
         </div>
 
-        <div className="flex items-center justify-between px-5 py-3.5 cursor-pointer">
+        <div className="flex items-center justify-between px-5 py-3.5">
           <div className="flex items-center gap-3">
-            <Bell size={18} style={{ color: 'var(--muted)' }} />
-            <span style={{ fontSize: '15px', color: 'var(--ink)' }}>Mute notifications</span>
+            <Image size={18} style={{ color: 'var(--muted)' }} />
+            <span style={{ fontSize: '15px', color: 'var(--ink)' }}>Shared Media</span>
           </div>
-          <span style={{ fontSize: '13px', color: 'var(--muted)' }}>No</span>
+          <span className="tnum text-xs font-semibold" style={{ color: 'var(--muted)' }}>
+            {mediaCount} items
+          </span>
         </div>
       </div>
 
-      {/* Shared Media Section */}
+      {/* Block Contact Option */}
       <div
         className="my-2"
         style={{
@@ -153,32 +268,15 @@ export function ProfilePage() {
         }}
       >
         <div
-          className="flex items-center justify-between px-5 py-3.5 cursor-pointer"
-          style={{ borderBottom: '1px solid var(--line)' }}
+          onClick={handleToggleBlock}
+          className="flex items-center justify-between px-5 py-3.5 cursor-pointer hover:bg-red-500/5 transition-colors"
         >
           <div className="flex items-center gap-3">
-            <Image size={18} style={{ color: 'var(--muted)' }} />
-            <span style={{ fontSize: '15px', color: 'var(--ink)' }}>Media, links, and docs</span>
+            <UserX size={18} style={{ color: 'var(--heart)' }} />
+            <span style={{ fontSize: '15px', color: 'var(--heart)' }}>
+              {isBlocked ? 'Unblock Contact' : 'Block Contact'}
+            </span>
           </div>
-          <span className="tnum" style={{ fontSize: '13px', color: 'var(--muted)' }}>
-            42
-          </span>
-        </div>
-
-        <div
-          onClick={() => navigate(`/security/${id || 'user_maya'}`)}
-          className="flex items-center justify-between px-5 py-3.5 cursor-pointer hover:bg-[var(--surface-2)] transition-colors"
-        >
-          <div className="flex items-center gap-3">
-            <Shield size={18} style={{ color: 'var(--accent)' }} />
-            <div>
-              <div style={{ fontSize: '15px', color: 'var(--ink)' }}>Encryption &amp; Safety Number</div>
-              <div style={{ fontSize: '12px', color: 'var(--muted)' }}>
-                Tap to verify safety number fingerprint
-              </div>
-            </div>
-          </div>
-          <FileText size={16} style={{ color: 'var(--muted)' }} />
         </div>
       </div>
     </div>
