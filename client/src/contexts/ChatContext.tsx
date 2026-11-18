@@ -67,6 +67,9 @@ interface ChatContextValue {
   deleteMessageForEveryone: (messageId: string) => Promise<void>;
   reactToMessage: (messageId: string, reaction: string) => Promise<void>;
   toggleStarMessage: (messageId: string) => Promise<boolean>;
+  setDisappearingTimer: (partnerId: string, seconds: number) => Promise<void>;
+  sendPoll: (question: string, options: string[], multipleAnswers: boolean) => Promise<void>;
+  votePoll: (messageId: string, pollId: string, optionIndexes: number[]) => Promise<void>;
   forwardMessage: (message: LocalMessage, targetPartnerId: string) => Promise<void>;
   retryFailedMessage: (clientMessageId: string) => Promise<void>;
   markAsRead: (partnerId: string) => Promise<void>;
@@ -381,8 +384,82 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
             );
             return;
           }
+
+          // 4. Control: Disappearing timer update
+          if (control.controlType === 'disappearing_timer_update') {
+            const seconds = Number(control.timerSeconds) || 0;
+            localStorage.setItem(`whatsus_disappearing_${partnerId}`, seconds.toString());
+            const humanReadable =
+              seconds === 3600
+                ? '1 hour'
+                : seconds === 86400
+                ? '24 hours'
+                : seconds === 604800
+                ? '7 days'
+                : 'off';
+            const sysMsg: LocalMessage = {
+              id: 'sys_' + Math.random().toString(36).slice(2) + Date.now(),
+              clientMessageId: 'sys_' + Math.random().toString(36).slice(2) + Date.now(),
+              senderId: 'system',
+              receiverId: user.id,
+              partnerId,
+              content:
+                seconds > 0
+                  ? `Disappearing messages set to ${humanReadable}. Messages sent from now on will disappear ${humanReadable} after being sent.`
+                  : `Disappearing messages turned off.`,
+              type: 'text',
+              status: 'delivered',
+              createdAt: new Date().toISOString(),
+              isSent: false,
+            };
+            await saveMessagesToDB([sysMsg]);
+            if (isForActiveChat) {
+              setMessages((prev) => [...prev, sysMsg]);
+            }
+            return;
+          }
+
+          // 5. Control: Poll vote
+          if (control.controlType === 'poll_vote' && control.pollId && Array.isArray(control.optionIndexes)) {
+            const db = await getDB();
+            const all = await db.getAll('messages');
+            const targetMsg = all.find((m) => m.poll && m.poll.pollId === control.pollId);
+            if (targetMsg && targetMsg.poll) {
+              const voterId = newMsg.senderId;
+              const updatedOptions = targetMsg.poll.options.map((opt, idx) => {
+                let voters = (opt.voterIds || []).filter((id) => id !== voterId);
+                if (control.optionIndexes.includes(idx)) {
+                  voters.push(voterId);
+                }
+                return { ...opt, voterIds: voters };
+              });
+              const updatedPoll = { ...targetMsg.poll, options: updatedOptions };
+              const updatedMsg = { ...targetMsg, poll: updatedPoll };
+              await db.put('messages', updatedMsg);
+              setMessages((prev) =>
+                prev.map((m) => (m.id === targetMsg.id ? updatedMsg : m))
+              );
+            }
+            return;
+          }
         } catch {}
       }
+
+      // Check for structured message (e.g. Poll)
+      let pollData = undefined;
+      let displayContent = decryptedContent;
+      try {
+        const parsed = JSON.parse(decryptedContent);
+        if (parsed.type === 'poll' && parsed.pollId) {
+          pollData = {
+            pollId: parsed.pollId,
+            question: parsed.question,
+            options: parsed.options,
+            multipleAnswers: parsed.multipleAnswers,
+          };
+          displayContent = `📊 Poll: ${parsed.question}`;
+        }
+      } catch {}
 
       // Standard message
       const localMsg: LocalMessage = {
@@ -391,13 +468,15 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         senderId: newMsg.senderId,
         receiverId: newMsg.receiverId,
         partnerId,
-        content: decryptedContent,
+        content: displayContent,
         type: newMsg.type as any,
         mediaUrl: newMsg.mediaUrl,
         status: newMsg.status as any,
         replyToId: newMsg.replyToId,
         createdAt: newMsg.createdAt,
         isSent: newMsg.senderId === user.id,
+        expiresAt: newMsg.expiresAt ? new Date(newMsg.expiresAt).getTime() : undefined,
+        poll: pollData,
       };
 
       await saveMessagesToDB([localMsg]);
@@ -508,6 +587,24 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       const clientMessageId = 'msg_' + Math.random().toString(36).slice(2) + Date.now();
       const now = new Date().toISOString();
 
+      const timerSec = Number(localStorage.getItem(`whatsus_disappearing_${activeChatId}`)) || 0;
+      const expiresAt = timerSec > 0 ? Date.now() + timerSec * 1000 : undefined;
+
+      let pollData = undefined;
+      let displayContent = content;
+      try {
+        const parsed = JSON.parse(content);
+        if (parsed.type === 'poll' && parsed.pollId) {
+          pollData = {
+            pollId: parsed.pollId,
+            question: parsed.question,
+            options: parsed.options,
+            multipleAnswers: parsed.multipleAnswers,
+          };
+          displayContent = `📊 Poll: ${parsed.question}`;
+        }
+      } catch {}
+
       if (!isControl) {
         const optimisticMsg: LocalMessage = {
           id: clientMessageId,
@@ -515,7 +612,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
           senderId: user.id,
           receiverId: activeChatId,
           partnerId: activeChatId,
-          content,
+          content: displayContent,
           type,
           mediaUrl,
           status: 'pending',
@@ -527,6 +624,9 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
             : undefined,
           createdAt: now,
           isSent: true,
+          expiresAt,
+          disappearingTimerSeconds: timerSec > 0 ? timerSec : undefined,
+          poll: pollData,
         };
 
         setMessages((prev) => [...prev, optimisticMsg]);
@@ -538,7 +638,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
             c.id === activeChatId
               ? {
                   ...c,
-                  snippet: type === 'photo' ? 'Photo' : type === 'voice' ? 'Voice note' : content.trim(),
+                  snippet: type === 'photo' ? 'Photo' : type === 'voice' ? 'Voice note' : displayContent.trim(),
                   lastMessageTime: new Date(now).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
                 }
               : c
@@ -558,6 +658,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         envelope,
         type,
         mediaUrl,
+        expiresAt: expiresAt ? new Date(expiresAt).toISOString() : undefined,
       });
 
       if (!sent) {
@@ -752,6 +853,132 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     return starred;
   }, []);
 
+  // 10-second local disappearing message eviction loop
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      const now = Date.now();
+      const db = await getDB();
+      const all = await db.getAll('messages');
+      const expired = all.filter((m) => m.expiresAt && m.expiresAt <= now);
+      if (expired.length > 0) {
+        const tx = db.transaction('messages', 'readwrite');
+        for (const m of expired) {
+          await tx.store.delete(m.id);
+          removeMessageFromSearch(m.id);
+        }
+        await tx.done;
+        setMessages((prev) => prev.filter((m) => !m.expiresAt || m.expiresAt > now));
+      }
+    }, 10_000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const setDisappearingTimer = useCallback(
+    async (partnerId: string, seconds: number) => {
+      if (!user) return;
+      localStorage.setItem(`whatsus_disappearing_${partnerId}`, seconds.toString());
+      await sendMessage(
+        JSON.stringify({
+          controlType: 'disappearing_timer_update',
+          timerSeconds: seconds,
+        }),
+        'text',
+        undefined,
+        undefined,
+        true
+      );
+
+      const humanReadable =
+        seconds === 3600
+          ? '1 hour'
+          : seconds === 86400
+          ? '24 hours'
+          : seconds === 604800
+          ? '7 days'
+          : 'off';
+      const sysMsg: LocalMessage = {
+        id: 'sys_' + Math.random().toString(36).slice(2) + Date.now(),
+        clientMessageId: 'sys_' + Math.random().toString(36).slice(2) + Date.now(),
+        senderId: 'system',
+        receiverId: partnerId,
+        partnerId,
+        content:
+          seconds > 0
+            ? `You set disappearing messages to ${humanReadable}. Messages sent after this will disappear ${humanReadable} after being sent.`
+            : `You turned off disappearing messages.`,
+        type: 'text',
+        status: 'delivered',
+        createdAt: new Date().toISOString(),
+        isSent: true,
+      };
+      await saveMessagesToDB([sysMsg]);
+      setMessages((prev) => [...prev, sysMsg]);
+    },
+    [user, sendMessage]
+  );
+
+  const sendPoll = useCallback(
+    async (question: string, options: string[], multipleAnswers: boolean) => {
+      if (!user || !activeChatId) return;
+      const pollId = 'poll_' + Math.random().toString(36).slice(2) + Date.now();
+      const pollPayload = {
+        type: 'poll',
+        pollId,
+        question,
+        options: options.map((opt, i) => ({
+          id: 'opt_' + i,
+          text: opt,
+          voterIds: [],
+        })),
+        multipleAnswers,
+      };
+      await sendMessage(JSON.stringify(pollPayload), 'text');
+    },
+    [user, activeChatId, sendMessage]
+  );
+
+  const votePoll = useCallback(
+    async (messageId: string, pollId: string, optionIndexes: number[]) => {
+      if (!user || !activeChatId) return;
+      // Update locally
+      const db = await getDB();
+      let target = await db.get('messages', messageId);
+      if (!target) {
+        const all = await db.getAll('messages');
+        target = all.find((m) => m.clientMessageId === messageId || m.poll?.pollId === pollId);
+      }
+
+      if (target && target.poll) {
+        const voterId = user.id;
+        const updatedOptions = target.poll.options.map((opt, idx) => {
+          let voters = (opt.voterIds || []).filter((id) => id !== voterId);
+          if (optionIndexes.includes(idx)) {
+            voters.push(voterId);
+          }
+          return { ...opt, voterIds: voters };
+        });
+        const updatedPoll = { ...target.poll, options: updatedOptions, hasVoted: true };
+        const updatedMsg = { ...target, poll: updatedPoll };
+        await db.put('messages', updatedMsg);
+        setMessages((prev) => prev.map((m) => (m.id === target?.id ? updatedMsg : m)));
+      }
+
+      // Send encrypted control message to partner
+      await sendMessage(
+        JSON.stringify({
+          controlType: 'poll_vote',
+          pollId,
+          optionIndexes,
+        }),
+        'text',
+        undefined,
+        undefined,
+        true
+      );
+    },
+    [user, activeChatId, sendMessage]
+  );
+
   const forwardMessage = useCallback(
     async (message: LocalMessage, targetPartnerId: string) => {
       if (!user) return;
@@ -877,6 +1104,9 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         deleteMessageForEveryone,
         reactToMessage,
         toggleStarMessage,
+        setDisappearingTimer,
+        sendPoll,
+        votePoll,
         forwardMessage,
         retryFailedMessage,
         markAsRead,

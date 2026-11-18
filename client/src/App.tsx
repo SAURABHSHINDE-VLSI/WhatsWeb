@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Outlet, useLocation, useNavigate, Navigat
 import { MessageSquare, Phone, Settings as SettingsIcon, Feather } from 'lucide-react';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { AppLockProvider } from './contexts/AppLockContext';
 import { ChatProvider } from './contexts/ChatContext';
 import { CallProvider } from './contexts/CallContext';
 import { CallModal } from './components/CallModal';
@@ -21,6 +22,7 @@ const RequestsPage = React.lazy(() => import('./pages/RequestsPage'));
 const InvitePage = React.lazy(() => import('./pages/InvitePage'));
 const CallsPage = React.lazy(() => import('./pages/CallsPage'));
 const SecurityDetailsPage = React.lazy(() => import('./pages/SecurityDetailsPage'));
+const ShareTargetPage = React.lazy(() => import('./pages/ShareTargetPage'));
 
 interface NavTabItem {
   label: string;
@@ -137,42 +139,45 @@ export default function App() {
   return (
     <ThemeProvider>
       <AuthProvider>
-        <CallProvider>
-          <ChatProvider>
-            <BrowserRouter>
-              <CallModal />
-              <ReloadPrompt />
-              <React.Suspense fallback={<PageSkeleton />}>
-                <Routes>
-                  {/* Public Auth Routes */}
-                  <Route path="/login" element={<LoginPage />} />
-                  <Route path="/invite/:code" element={<InvitePage />} />
-                  <Route path="/onboarding" element={<OnboardingPage />} />
+        <AppLockProvider>
+          <CallProvider>
+            <ChatProvider>
+              <BrowserRouter>
+                <CallModal />
+                <ReloadPrompt />
+                <React.Suspense fallback={<PageSkeleton />}>
+                  <Routes>
+                    {/* Public Auth Routes */}
+                    <Route path="/login" element={<LoginPage />} />
+                    <Route path="/invite/:code" element={<InvitePage />} />
+                    <Route path="/onboarding" element={<OnboardingPage />} />
 
-                  {/* Protected Routes */}
-                  <Route element={<ProtectedRoute />}>
-                    {/* Tabbed Layout */}
-                    <Route element={<Layout />}>
-                      <Route path="/" element={<ChatListPage />} />
-                      <Route path="/calls" element={<CallsPage />} />
-                      <Route path="/settings" element={<SettingsPage />} />
+                    {/* Protected Routes */}
+                    <Route element={<ProtectedRoute />}>
+                      {/* Tabbed Layout */}
+                      <Route element={<Layout />}>
+                        <Route path="/" element={<ChatListPage />} />
+                        <Route path="/calls" element={<CallsPage />} />
+                        <Route path="/settings" element={<SettingsPage />} />
+                      </Route>
+
+                      {/* Full Screen Screens */}
+                      <Route path="/new-chat" element={<ConnectPage />} />
+                      <Route path="/requests" element={<RequestsPage />} />
+                      <Route path="/chat/:id" element={<ConversationPage />} />
+                      <Route path="/profile/:id" element={<ProfilePage />} />
+                      <Route path="/security/:id" element={<SecurityDetailsPage />} />
+                      <Route path="/share" element={<ShareTargetPage />} />
                     </Route>
 
-                    {/* Full Screen Screens */}
-                    <Route path="/new-chat" element={<ConnectPage />} />
-                    <Route path="/requests" element={<RequestsPage />} />
-                    <Route path="/chat/:id" element={<ConversationPage />} />
-                    <Route path="/profile/:id" element={<ProfilePage />} />
-                    <Route path="/security/:id" element={<SecurityDetailsPage />} />
-                  </Route>
-
-                  {/* Fallback route */}
-                  <Route path="*" element={<Navigate to="/" replace />} />
-                </Routes>
-              </React.Suspense>
-            </BrowserRouter>
-          </ChatProvider>
-        </CallProvider>
+                    {/* Fallback route */}
+                    <Route path="*" element={<Navigate to="/" replace />} />
+                  </Routes>
+                </React.Suspense>
+              </BrowserRouter>
+            </ChatProvider>
+          </CallProvider>
+        </AppLockProvider>
       </AuthProvider>
     </ThemeProvider>
   );

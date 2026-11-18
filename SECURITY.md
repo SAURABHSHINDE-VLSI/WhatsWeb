@@ -88,6 +88,36 @@ WhatsUS is built with a commitment to **honesty over marketing**. We document ou
   - When messages are deleted, edited, or cleared, the in-memory search index is immediately updated.
   - The index is destroyed upon logout, session revocation, or application lock.
 
+- **Client-Side Encrypted Backups (Argon2id + XChaCha20-Poly1305)**:
+  - Encrypted backups are derived entirely on the client device using **Argon2id (RFC 9106)** with 64 MB of memory, 2 iterations, 1 lane, and a 16-byte CSPRNG salt.
+  - The derived 256-bit symmetric key encrypts the local message database, chat state, and cryptographic key material with libsodium `crypto_secretbox_easy` (XChaCha20-Poly1305, 24-byte random nonce).
+  - Sensitive key material in memory is zeroed immediately after derivation via `sodium.memzero`.
+  - **Zero Server Plaintext**: The server stores only raw ciphertext, salt, and nonce. The server has zero knowledge of the passphrase or contents.
+  - **Zero-Knowledge Recovery**: If the user loses their recovery passphrase, the backup is **mathematically impossible to recover**. WhatsUs provides no password reset or bypass.
+
+- **WebAuthn Passkeys (FIDO2)**:
+  - Passkeys use W3C WebAuthn / FIDO2 public-key cryptography tied to device authenticators (Touch ID, Face ID, Windows Hello, security keys).
+  - The server issues a cryptographically random, single-use auth nonce (`AuthNonce` table with a 5-minute TTL).
+  - The client signs the challenge using the hardware-bound private key. The server stores only the public key, credential ID, and signature counter.
+  - No passwords or shared secrets are transmitted or stored on the server.
+
+- **App Lock & Inactivity Timeout (Client Boundary)**:
+  - App Lock protects against casual shoulder-surfing or unauthorized device access while the device is unlocked.
+  - The user's PIN is salted with 16 random bytes and hashed with SHA-256 in client storage.
+  - When enabled, the app automatically locks upon entering the background (`visibilitychange`) after the configured timeout (immediately up to 1 hour).
+  - Background task-switcher preview leakage is mitigated by applying the `.app-locked` blur filter class to `document.body` whenever the app is locked or hidden.
+  - **Honest Limitation**: App Lock is an application-level UI barrier within the browser runtime. It does not replace full-disk encryption and cannot protect against an adversary with physical root access who dumps IndexedDB storage.
+
+- **Disappearing Messages (Server Retention & Client Eviction)**:
+  - Disappearing message timers (Off, 1 hour, 24 hours, 7 days) are configured per-chat and communicated as encrypted control envelopes.
+  - **Server Retention**: Undelivered messages with an expiration timestamp (`expiresAt <= NOW()`) are permanently deleted from Postgres by the background retention scheduler.
+  - **Client Eviction**: A local background timer sweeps IndexedDB and the in-memory search index every 10 seconds, permanently removing expired messages and search tokens.
+  - **Honest Limitation**: Disappearing messages are **best-effort**. While WhatsUs prevents standard saving or forward flows, a recipient running a modified browser, taking screenshots, or capturing external photos can preserve message contents.
+
+- **1:1 Polls & Live Voting**:
+  - Poll questions, options, and live votes travel exclusively inside the end-to-end encrypted Double Ratchet channel.
+  - The server observes only standard ciphertext envelope metadata (sender, receiver, timestamp) and has zero knowledge of poll questions, options, votes, or tallies.
+
 ---
 
 ## 3. Compromised Secrets Notice & Rotation

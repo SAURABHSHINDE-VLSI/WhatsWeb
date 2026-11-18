@@ -7,6 +7,7 @@ export interface RetentionCleanupResult {
   cutoff: Date;
   purgedDeliveredAndRead: number;
   purgedUndeliveredQueue: number;
+  purgedDisappearing?: number;
   totalPurged: number;
 }
 
@@ -56,12 +57,23 @@ export async function runMessageRetentionCleanup(
   });
   const purgedUndeliveredQueue = queueDeleteResult.count;
 
+  // 3. Purge expired disappearing messages (both undelivered and delivered)
+  const disappearingDeleteResult = await prisma.message.deleteMany({
+    where: {
+      expiresAt: {
+        lte: new Date(),
+      },
+    },
+  });
+  const purgedDisappearing = disappearingDeleteResult.count;
+
   return {
     retentionDays,
     cutoff,
     purgedDeliveredAndRead,
     purgedUndeliveredQueue,
-    totalPurged: purgedDeliveredAndRead + purgedUndeliveredQueue,
+    purgedDisappearing,
+    totalPurged: purgedDeliveredAndRead + purgedUndeliveredQueue + purgedDisappearing,
   };
 }
 

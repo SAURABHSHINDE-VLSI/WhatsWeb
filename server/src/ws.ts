@@ -135,6 +135,7 @@ export async function websocketRoutes(app: FastifyInstance) {
             type = 'text',
             mediaUrl,
             replyToId,
+            expiresAt,
           } = data;
 
           const rawCiphertext = ciphertext || content;
@@ -231,6 +232,7 @@ export async function websocketRoutes(app: FastifyInstance) {
               replyToId,
               status: initialStatus,
               deliveredAt: receiverOnline ? now : null,
+              expiresAt: typeof expiresAt === 'number' ? new Date(expiresAt) : expiresAt ? new Date(expiresAt) : null,
             },
           });
 
@@ -241,6 +243,7 @@ export async function websocketRoutes(app: FastifyInstance) {
             messageId: message.id,
             status: initialStatus,
             createdAt: message.createdAt,
+            expiresAt: message.expiresAt ? message.expiresAt.getTime() : undefined,
           });
 
           // Forward encrypted blob & envelope to receiver
@@ -265,6 +268,7 @@ export async function websocketRoutes(app: FastifyInstance) {
                 status: initialStatus,
                 replyToId: message.replyToId,
                 createdAt: message.createdAt,
+                expiresAt: message.expiresAt ? message.expiresAt.getTime() : undefined,
               },
             });
           } else {
@@ -482,6 +486,7 @@ async function syncUndeliveredMessages(socket: WebSocket, userId: string, lastMe
           status: 'delivered',
           replyToId: message.replyToId,
           createdAt: message.createdAt,
+          expiresAt: message.expiresAt ? message.expiresAt.getTime() : undefined,
         },
       });
 

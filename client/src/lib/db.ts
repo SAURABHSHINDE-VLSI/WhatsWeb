@@ -27,6 +27,15 @@ export interface LocalMessage {
   isStarred?: boolean;
   voiceDuration?: number;
   waveform?: number[];
+  disappearingTimerSeconds?: number;
+  expiresAt?: number;
+  poll?: {
+    pollId: string;
+    question: string;
+    options: { id: string; text: string; voterIds: string[] }[];
+    multipleAnswers?: boolean;
+    hasVoted?: boolean;
+  };
 }
 
 export interface LocalChat {

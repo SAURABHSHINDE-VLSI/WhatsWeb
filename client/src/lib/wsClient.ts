@@ -20,6 +20,7 @@ export interface WSMessageNewEvent {
   mediaUrl?: string;
   status: string;
   replyToId?: string;
+  expiresAt?: string | null;
   createdAt: string;
 }
 
@@ -342,6 +343,7 @@ class WebSocketClient {
     type?: string;
     mediaUrl?: string;
     replyToId?: string;
+    expiresAt?: string;
   }): boolean {
     if (this.socket && this.socket.readyState === WebSocket.OPEN) {
       this.socket.send(

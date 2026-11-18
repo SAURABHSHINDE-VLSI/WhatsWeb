@@ -22,6 +22,15 @@ export default defineConfig({
         theme_color: '#F6F2EA',
         background_color: '#F6F2EA',
         start_url: '/',
+        share_target: {
+          action: '/share',
+          method: 'GET',
+          params: {
+            title: 'title',
+            text: 'text',
+            url: 'url',
+          },
+        },
         icons: [
           {
             src: '/pwa-192x192.png',

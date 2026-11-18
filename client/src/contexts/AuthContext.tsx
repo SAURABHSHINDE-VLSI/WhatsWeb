@@ -10,11 +10,13 @@ import {
   setAccessToken,
 } from '../lib/api';
 import { wsClient } from '../lib/wsClient';
+import { loginWithPasskey } from '../lib/passkeyClient';
 
 interface AuthContextValue {
   user: User | null;
   isLoading: boolean;
   googleSignIn: (idToken: string, nonce: string) => Promise<{ isOnboarded: boolean }>;
+  passkeySignIn: (username?: string) => Promise<{ isOnboarded: boolean }>;
   completeOnboarding: (username: string, displayName: string, avatarTint?: number) => Promise<void>;
   refreshProfile: () => Promise<void>;
   logout: () => Promise<void>;
@@ -83,6 +85,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const passkeySignIn = async (username?: string) => {
+    setIsLoading(true);
+    try {
+      const data = await loginWithPasskey(username);
+      setAccessToken(data.accessToken);
+      setUser(data.user);
+      wsClient.disconnect();
+      if (data.accessToken) {
+        wsClient.connect();
+      }
+      return { isOnboarded: data.isOnboarded };
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const completeOnboarding = async (username: string, displayName: string, avatarTint?: number) => {
     setIsLoading(true);
     try {
@@ -115,6 +133,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         user,
         isLoading,
         googleSignIn,
+        passkeySignIn,
         completeOnboarding,
         refreshProfile,
         logout,

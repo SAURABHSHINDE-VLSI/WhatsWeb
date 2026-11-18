@@ -819,3 +819,139 @@ export async function decryptMessage(
   await db.put('sessions', session);
   return sodium.to_string(plaintextBytes);
 }
+
+/**
+ * Phase D: Export Raw Key Material for Argon2id Encrypted Backup
+ */
+export async function exportRawKeyMaterialForBackup(): Promise<{
+  identity: {
+    signPublicKey: string;
+    signPrivateKey: string;
+    dhPublicKey: string;
+    dhPrivateKey: string;
+  } | null;
+  signedPreKey: {
+    publicKey: string;
+    privateKey: string;
+    signature: string;
+    createdAt: number;
+  } | null;
+  sessions: any[];
+  fingerprints: any[];
+}> {
+  await sodium.ready;
+  const db = await getCryptoDB();
+  const identity = await db.get('identity', 'current');
+  const spk = await db.get('signed_prekeys', 'current');
+  const sessions = await db.getAll('sessions');
+  const fingerprints = await db.getAll('verified_fingerprints');
+
+  let rawIdentity = null;
+  if (identity) {
+    const rawSignPriv = await unwrapKey(identity.signPrivateKey);
+    const rawDhPriv = await unwrapKey(identity.dhPrivateKey);
+    rawIdentity = {
+      signPublicKey: identity.signPublicKey,
+      signPrivateKey: sodium.to_base64(rawSignPriv),
+      dhPublicKey: identity.dhPublicKey,
+      dhPrivateKey: sodium.to_base64(rawDhPriv),
+    };
+    sodium.memzero(rawSignPriv);
+    sodium.memzero(rawDhPriv);
+  }
+
+  let rawSpk = null;
+  if (spk) {
+    const rawSpkPriv = await unwrapKey(spk.privateKey);
+    rawSpk = {
+      publicKey: spk.publicKey,
+      privateKey: sodium.to_base64(rawSpkPriv),
+      signature: spk.signature,
+      createdAt: spk.createdAt,
+    };
+    sodium.memzero(rawSpkPriv);
+  }
+
+  return {
+    identity: rawIdentity,
+    signedPreKey: rawSpk,
+    sessions,
+    fingerprints,
+  };
+}
+
+/**
+ * Phase D: Import Raw Key Material from Decrypted Backup
+ */
+export async function importRawKeyMaterialFromBackup(data: {
+  identity?: {
+    signPublicKey: string;
+    signPrivateKey: string;
+    dhPublicKey: string;
+    dhPrivateKey: string;
+  } | null;
+  signedPreKey?: {
+    publicKey: string;
+    privateKey: string;
+    signature: string;
+    createdAt: number;
+  } | null;
+  sessions?: any[];
+  fingerprints?: any[];
+}): Promise<void> {
+  await sodium.ready;
+  const db = await getCryptoDB();
+
+  if (data.identity) {
+    const rawSignPriv = sodium.from_base64(data.identity.signPrivateKey);
+    const rawDhPriv = sodium.from_base64(data.identity.dhPrivateKey);
+    const wrappedSignPriv = await wrapKey(rawSignPriv);
+    const wrappedDhPriv = await wrapKey(rawDhPriv);
+    sodium.memzero(rawSignPriv);
+    sodium.memzero(rawDhPriv);
+
+    await db.put(
+      'identity',
+      {
+        signPublicKey: data.identity.signPublicKey,
+        signPrivateKey: wrappedSignPriv,
+        dhPublicKey: data.identity.dhPublicKey,
+        dhPrivateKey: wrappedDhPriv,
+      },
+      'current'
+    );
+  }
+
+  if (data.signedPreKey) {
+    const rawSpkPriv = sodium.from_base64(data.signedPreKey.privateKey);
+    const wrappedSpkPriv = await wrapKey(rawSpkPriv);
+    sodium.memzero(rawSpkPriv);
+
+    await db.put(
+      'signed_prekeys',
+      {
+        publicKey: data.signedPreKey.publicKey,
+        privateKey: wrappedSpkPriv,
+        signature: data.signedPreKey.signature,
+        createdAt: data.signedPreKey.createdAt,
+      },
+      'current'
+    );
+  }
+
+  if (data.sessions && Array.isArray(data.sessions)) {
+    const tx = db.transaction('sessions', 'readwrite');
+    for (const s of data.sessions) {
+      await tx.store.put(s);
+    }
+    await tx.done;
+  }
+
+  if (data.fingerprints && Array.isArray(data.fingerprints)) {
+    const tx = db.transaction('verified_fingerprints', 'readwrite');
+    for (const f of data.fingerprints) {
+      await tx.store.put(f);
+    }
+    await tx.done;
+  }
+}

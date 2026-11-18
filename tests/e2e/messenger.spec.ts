@@ -137,8 +137,12 @@ test.describe('WhatsUs Phase C: E2E Two-Browser Multi-User Suite', () => {
     await bobContactCard.click();
     await expect(pageBob).toHaveURL(new RegExp(`/chat/${alice.id}`));
 
-    const testMessageText = `E2EE secret from Alice at ${Date.now()}`;
     const aliceInput = pageAlice.locator('input[placeholder="Write a message..."]');
+    const bobInput = pageBob.locator('input[placeholder="Write a message..."]');
+    await expect(aliceInput).toBeVisible({ timeout: 15_000 });
+    await expect(bobInput).toBeVisible({ timeout: 15_000 });
+
+    const testMessageText = `E2EE secret from Alice at ${Date.now()}`;
     await aliceInput.fill(testMessageText);
     await pageAlice.locator('button[aria-label="Send message"]').click();
 
@@ -376,5 +380,143 @@ test.describe('WhatsUs Phase C: E2E Two-Browser Multi-User Suite', () => {
     });
     // Server must reject invalid chunk or forged structure
     expect([400, 401, 404]).toContain(forgedPost.status());
+  });
+
+  test('9. 1:1 Poll Creation and Encrypted Live Voting', async () => {
+    await setupChatSession(pageAlice, pageBob, alice, bob);
+
+    // Alice opens Create Poll modal
+    await pageAlice.locator('button[aria-label="Create poll"]').click();
+    await expect(pageAlice.locator('h3:has-text("Create a Poll")')).toBeVisible();
+
+    // Alice fills question and options
+    const questionText = `Lunch spot today ${Date.now()}?`;
+    await pageAlice.locator('input[placeholder="Ask a question..."]').fill(questionText);
+    await pageAlice.locator('input[placeholder="Option 1"]').fill('Tacos');
+    await pageAlice.locator('input[placeholder="Option 2"]').fill('Sushi');
+
+    // Alice submits poll
+    await pageAlice.locator('button:has-text("Send Poll")').click();
+
+    // Alice sees the poll bubble
+    await expect(pageAlice.locator('h4', { hasText: questionText })).toBeVisible({ timeout: 15_000 });
+
+    // Bob receives the poll bubble live
+    const bobPoll = pageBob.locator('h4', { hasText: questionText });
+    await expect(bobPoll).toBeVisible({ timeout: 20_000 });
+
+    // Bob votes for 'Sushi'
+    const sushiOptionBob = pageBob.locator('button:has-text("Sushi")').first();
+    await sushiOptionBob.click();
+
+    // Verify Bob's client updates to 100% and 1 vote
+    await expect(pageBob.locator('text=100%').first()).toBeVisible({ timeout: 15_000 });
+    await expect(pageBob.locator('text=1 vote').first()).toBeVisible({ timeout: 15_000 });
+
+    // Verify Alice's client receives the encrypted vote control message in real-time
+    await expect(pageAlice.locator('text=100%').first()).toBeVisible({ timeout: 20_000 });
+    await expect(pageAlice.locator('text=1 vote').first()).toBeVisible({ timeout: 20_000 });
+  });
+
+  test('10. App Lock: PIN Setup and Lock Screen Interception', async () => {
+    await pageAlice.goto('/settings');
+    await expect(pageAlice.locator('h1:has-text("Settings")')).toBeVisible();
+
+    // Alice turns on App Lock toggle
+    await pageAlice.locator('button[aria-label="App Lock toggle"]').click();
+    await expect(pageAlice.locator('h3:has-text("Configure App Lock")')).toBeVisible();
+
+    // Alice sets 4-digit PIN: "4321"
+    const pinInput = pageAlice.locator('input[placeholder="Enter 4-8 digits"]');
+    await pinInput.fill('4321');
+    await pageAlice.locator('button:has-text("Enable App Lock")').click();
+
+    // Verify App Lock status says Enabled
+    await expect(pageAlice.locator('text=Enabled • Auto-locks immediately')).toBeVisible();
+
+    // Alice clicks "Lock Now"
+    await pageAlice.locator('button:has-text("Lock Now")').click();
+
+    // Verify full-screen lock screen appears
+    await expect(pageAlice.locator('h2:has-text("WhatsUs is Locked")')).toBeVisible();
+
+    // Alice enters incorrect PIN first
+    const unlockInput = pageAlice.locator('input[placeholder="Enter PIN"]');
+    await unlockInput.fill('9999');
+    await pageAlice.locator('button:has-text("Unlock")').click();
+    await expect(pageAlice.locator('text=Incorrect PIN')).toBeVisible();
+
+    // Alice enters correct PIN "4321"
+    await unlockInput.fill('4321');
+    await pageAlice.locator('button:has-text("Unlock")').click();
+
+    // Lock screen dismisses and settings view is restored
+    await expect(pageAlice.locator('h2:has-text("WhatsUs is Locked")')).not.toBeVisible();
+    await expect(pageAlice.locator('h1:has-text("Settings")')).toBeVisible();
+  });
+
+  test('11. Disappearing Messages: Timer Configuration Notice', async () => {
+    await setupChatSession(pageAlice, pageBob, alice, bob);
+
+    // Alice clicks disappearing messages timer icon in conversation header
+    await pageAlice.locator('button[aria-label="Disappearing messages timer"]').click();
+    await expect(pageAlice.locator('h3:has-text("Disappearing Messages")')).toBeVisible();
+
+    // Alice selects 24 Hours
+    await pageAlice.locator('button:has-text("24 Hours (1 Day)")').click();
+
+    // Verify system notice appears in Alice's chat
+    await expect(
+      pageAlice.locator('text=disappearing messages to 24 hours').first()
+    ).toBeVisible({ timeout: 15_000 });
+
+    // Verify Bob receives the encrypted timer update control message
+    await expect(
+      pageBob.locator('text=Disappearing messages set to 24 hours').first()
+    ).toBeVisible({ timeout: 20_000 });
+  });
+
+  test('12. Encrypted Backup: Client-Side Argon2id Cloud Backup & Deletion', async () => {
+    await pageAlice.goto('/settings');
+    await expect(pageAlice.locator('h1:has-text("Settings")')).toBeVisible();
+
+    // Alice clicks "Back Up Now"
+    await pageAlice.locator('div:has-text("Back Up Now")').last().click();
+    await expect(pageAlice.locator('h3:has-text("Create Encrypted Backup")')).toBeVisible();
+
+    // Alice enters recovery passphrase
+    const passphraseInput = pageAlice.locator('input[placeholder="Enter strong passphrase"]');
+    await passphraseInput.fill('mySecureArgon2Passphrase!');
+
+    // Alice clicks "Upload Encrypted Cloud Backup"
+    await pageAlice.locator('button:has-text("Upload Encrypted Cloud Backup")').click();
+
+    // Verify success confirmation
+    await expect(
+      pageAlice.locator('text=Encrypted backup successfully uploaded to cloud!')
+    ).toBeVisible({ timeout: 25_000 });
+
+    // Verify database has stored the encrypted backup for Alice
+    const backupRecord = await prisma.userBackup.findUnique({
+      where: { userId: alice.id },
+    });
+    expect(backupRecord).not.toBeNull();
+    expect(backupRecord?.backupCiphertext).toBeTruthy();
+    expect(backupRecord?.salt).toBeTruthy();
+    expect(backupRecord?.nonce).toBeTruthy();
+
+    // Verify cloud backup status card in Settings updates
+    await expect(pageAlice.locator('text=Encrypted Cloud Backup Active')).toBeVisible({ timeout: 10_000 });
+
+    // Alice deletes cloud backup
+    pageAlice.once('dialog', async (dialog) => {
+      await dialog.accept();
+    });
+    await pageAlice.locator('div:has-text("Delete Cloud Backup")').last().click();
+
+    // Verify record is deleted from database
+    await expect.poll(async () => {
+      return await prisma.userBackup.findUnique({ where: { userId: alice.id } });
+    }, { timeout: 10_000 }).toBeNull();
   });
 });

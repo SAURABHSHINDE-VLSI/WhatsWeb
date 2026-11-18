@@ -18,6 +18,8 @@ import { mediaRoutes } from './media.js';
 import { turnRoutes } from './turn.js';
 import { retentionRoutes, startRetentionScheduler } from './retention.js';
 import { wsTicketRoutes } from './wsTicket.js';
+import { backupRoutes } from './backup.js';
+import { passkeyRoutes } from './passkey.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -154,6 +156,8 @@ await app.register(mediaRoutes);
 await app.register(turnRoutes);
 await app.register(retentionRoutes);
 await app.register(wsTicketRoutes);
+await app.register(backupRoutes);
+await app.register(passkeyRoutes);
 
 // Start message retention cleanup scheduler (runs daily in background)
 startRetentionScheduler();

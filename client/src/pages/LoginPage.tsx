@@ -1,8 +1,9 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Feather, Shield, AlertCircle } from 'lucide-react';
+import { Feather, Shield, AlertCircle, Fingerprint } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { apiGetHealth, apiGetAuthNonce } from '../lib/api';
+import { isPasskeySupported } from '../lib/passkeyClient';
 
 declare global {
   interface Window {
@@ -20,7 +21,7 @@ declare global {
 
 export function LoginPage() {
   const navigate = useNavigate();
-  const { user, googleSignIn } = useAuth();
+  const { user, googleSignIn, passkeySignIn } = useAuth();
   const [clientId, setClientId] = useState<string | null>(null);
   const [nonce, setNonce] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -91,6 +92,23 @@ export function LoginPage() {
     },
     [googleSignIn, navigate, nonce, fetchConfigAndNonce]
   );
+
+  const handlePasskeySignIn = async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const { isOnboarded } = await passkeySignIn();
+      if (isOnboarded) {
+        navigate('/');
+      } else {
+        navigate('/onboarding');
+      }
+    } catch (err: any) {
+      setError(err.message || 'Passkey sign-in failed');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   // Initialize and render Google Identity Services button
   useEffect(() => {
@@ -223,6 +241,33 @@ export function LoginPage() {
               <span className="text-xs" style={{ color: 'var(--muted)' }}>
                 Verifying cryptographic token...
               </span>
+            )}
+
+            {isPasskeySupported() && (
+              <>
+                <div className="flex items-center gap-3 w-full my-1">
+                  <div className="flex-1 h-px bg-[var(--line)]" />
+                  <span className="text-[11px] font-medium" style={{ color: 'var(--muted)' }}>
+                    OR
+                  </span>
+                  <div className="flex-1 h-px bg-[var(--line)]" />
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handlePasskeySignIn}
+                  disabled={isLoading}
+                  className="w-full py-2.5 px-4 rounded-xl border flex items-center justify-center gap-2.5 text-xs font-semibold cursor-pointer transition-all hover:bg-black/5 active:scale-98 disabled:opacity-50"
+                  style={{
+                    backgroundColor: 'var(--surface-1)',
+                    borderColor: 'var(--line)',
+                    color: 'var(--ink)',
+                  }}
+                >
+                  <Fingerprint size={18} style={{ color: 'var(--accent)' }} />
+                  <span>Sign in with Passkey / Biometrics</span>
+                </button>
+              </>
             )}
           </div>
         ) : (

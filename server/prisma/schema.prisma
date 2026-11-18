@@ -32,6 +32,8 @@ model User {
   receivedMessages        Message[]           @relation("ReceivedMessages")
   preKeyBundle            PreKeyBundle?
   pushSubscriptions       PushSubscription[]
+  backup                  UserBackup?
+  passkeys                PasskeyCredential[]
 }
 
 model Identity {
@@ -127,12 +129,14 @@ model Message {
   createdAt         DateTime  @default(now())
   deliveredAt       DateTime?
   readAt            DateTime?
+  expiresAt         DateTime? // Undelivered message expiry for disappearing messages
 
   @@index([senderId, receiverId])
   @@index([receiverId, status])
   @@index([senderId, receiverId, createdAt])
   @@index([status, deliveredAt, readAt, createdAt])
   @@index([createdAt])
+  @@index([expiresAt])
 }
 
 model Contact {
@@ -218,6 +222,36 @@ model WsTicket {
 
   @@index([ticket])
   @@index([expiresAt])
+  @@index([userId])
+}
+
+model UserBackup {
+  id               String   @id @default(cuid())
+  userId           String   @unique
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  backupCiphertext String   // Base64 encrypted JSON blob (Zero server plaintext!)
+  salt             String   // Base64 16-byte Argon2id salt
+  nonce            String   // Base64 24-byte XChaCha20 nonce
+  version          Int      @default(1)
+  sizeBytes        Int
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model PasskeyCredential {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  credentialId String   @unique // base64url or hex
+  publicKey    String   // base64 public key
+  counter      BigInt   @default(0)
+  deviceName   String?
+  transports   String?
+  createdAt    DateTime @default(now())
+  lastUsedAt   DateTime @default(now())
+
   @@index([userId])
 }
 

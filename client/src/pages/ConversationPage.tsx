@@ -24,6 +24,8 @@ import {
   Star,
   Search,
   StopCircle,
+  BarChart2,
+  Image as ImageIcon,
 } from 'lucide-react';
 import { useChat } from '../contexts/ChatContext';
 import { useCall } from '../contexts/CallContext';
@@ -33,6 +35,10 @@ import { LinkInterstitialModal } from '../components/LinkInterstitialModal';
 import { renderFormattedMessageText } from '../lib/textFormat';
 import { VoiceNotePlayer } from '../components/VoiceNotePlayer';
 import { MessageErrorBoundary } from '../components/MessageErrorBoundary';
+import { PollBubble } from '../components/PollBubble';
+import { CreatePollModal } from '../components/CreatePollModal';
+import { DisappearingTimerModal } from '../components/DisappearingTimerModal';
+import { ChatMediaDrawer } from '../components/ChatMediaDrawer';
 import { AudioRecorderController, VoiceRecordingResult } from '../lib/audioRecorder';
 import { saveDraftToDB, getDraftFromDB, LocalMessage } from '../lib/db';
 import { searchLocalMessages } from '../lib/searchIndex';
@@ -68,6 +74,8 @@ interface DisplayMessage {
   isStarred?: boolean;
   reaction?: string;
   reactionCount?: number;
+  poll?: LocalMessage['poll'];
+  expiresAt?: number;
   rawMsg: LocalMessage;
 }
 
@@ -192,6 +200,17 @@ const MessageRow = React.memo<MessageRowProps>(function MessageRow({
           >
             This message was deleted
           </div>
+        ) : msg.poll ? (
+          <div
+            className="border shadow-xs text-left"
+            style={{
+              backgroundColor: 'var(--surface-1)',
+              borderRadius: 'var(--radius-bubble-sent)',
+              borderColor: 'var(--line)',
+            }}
+          >
+            <PollBubble messageId={msg.id} poll={msg.poll} isSent={true} />
+          </div>
         ) : msg.isVoice && msg.mediaPayload ? (
           <VoiceNotePlayer
             mediaUrl={msg.mediaPayload.mediaUrl}
@@ -242,6 +261,11 @@ const MessageRow = React.memo<MessageRowProps>(function MessageRow({
           className="flex items-center gap-1 mt-1 text-[11px] tnum select-none px-1"
           style={{ color: 'var(--muted)' }}
         >
+          {msg.expiresAt && (
+            <span title="Disappearing message">
+              <Clock size={11} className="text-amber-500 mr-0.5" />
+            </span>
+          )}
           {msg.isStarred && (
             <Star size={11} className="fill-[var(--accent)] text-[var(--accent)] mr-0.5" />
           )}
@@ -306,6 +330,17 @@ const MessageRow = React.memo<MessageRowProps>(function MessageRow({
         >
           This message was deleted
         </div>
+      ) : msg.poll ? (
+        <div
+          className="border shadow-xs text-left"
+          style={{
+            backgroundColor: 'var(--surface-1)',
+            borderRadius: 'var(--radius-sm)',
+            borderColor: 'var(--line)',
+          }}
+        >
+          <PollBubble messageId={msg.id} poll={msg.poll} isSent={false} />
+        </div>
       ) : msg.isDecryptionFailure ? (
         <div
           className="flex items-center gap-2 p-2.5 rounded-xl text-xs"
@@ -365,6 +400,11 @@ const MessageRow = React.memo<MessageRowProps>(function MessageRow({
         className="flex items-center gap-1 mt-0.5 text-[11px] tnum select-none"
         style={{ color: 'var(--muted)' }}
       >
+        {msg.expiresAt && (
+          <span title="Disappearing message">
+            <Clock size={11} className="text-amber-500 mr-0.5" />
+          </span>
+        )}
         {msg.isStarred && (
           <Star size={11} className="fill-[var(--accent)] text-[var(--accent)] mr-0.5" />
         )}
@@ -432,6 +472,14 @@ export function ConversationPage() {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [deleteConfirmMsg, setDeleteConfirmMsg] = useState<DisplayMessage | null>(null);
 
+  // Phase D States: Polls, Disappearing Timer, Media Drawer
+  const [showPollModal, setShowPollModal] = useState(false);
+  const [showDisappearingModal, setShowDisappearingModal] = useState(false);
+  const [showMediaDrawer, setShowMediaDrawer] = useState(false);
+  const isDisappearingActive = partnerId
+    ? (Number(localStorage.getItem(`whatsus_disappearing_${partnerId}`)) || 0) > 0
+    : false;
+
   // In-chat search
   const [isSearching, setIsSearching] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -490,6 +538,22 @@ export function ConversationPage() {
         } catch (e) {}
       }
 
+      let pollData = m.poll;
+      if (!pollData && m.content.startsWith('{')) {
+        try {
+          const parsed = JSON.parse(m.content);
+          if (parsed.type === 'poll' && parsed.pollId) {
+            pollData = {
+              pollId: parsed.pollId,
+              question: parsed.question,
+              options: parsed.options,
+              multipleAnswers: parsed.multipleAnswers,
+            };
+            displayText = `📊 Poll: ${parsed.question}`;
+          }
+        } catch {}
+      }
+
       const isDecryptionFailure = m.content.includes('[Could not decrypt message');
 
       return {
@@ -517,6 +581,8 @@ export function ConversationPage() {
           : undefined,
         reaction: m.reaction,
         reactionCount: m.reaction ? 1 : undefined,
+        poll: pollData,
+        expiresAt: m.expiresAt,
         rawMsg: m,
       };
     });
@@ -967,6 +1033,26 @@ export function ConversationPage() {
             style={{ color: 'var(--muted)' }}
           >
             <Phone size={19} strokeWidth={1.75} />
+          </button>
+          <button
+            type="button"
+            aria-label="Disappearing messages timer"
+            title="Disappearing messages timer"
+            onClick={() => setShowDisappearingModal(true)}
+            className="p-2 cursor-pointer transition-opacity hover:opacity-75"
+            style={{ color: isDisappearingActive ? 'var(--accent)' : 'var(--muted)' }}
+          >
+            <Clock size={18} strokeWidth={1.75} />
+          </button>
+          <button
+            type="button"
+            aria-label="Shared media and starred messages"
+            title="Shared media & starred"
+            onClick={() => setShowMediaDrawer(true)}
+            className="p-2 cursor-pointer transition-opacity hover:opacity-75"
+            style={{ color: 'var(--muted)' }}
+          >
+            <ImageIcon size={18} strokeWidth={1.75} />
           </button>
         </div>
       </header>
@@ -1523,6 +1609,18 @@ export function ConversationPage() {
               <Plus size={20} strokeWidth={2} />
             </button>
 
+            <button
+              type="button"
+              aria-label="Create poll"
+              title="Create Poll"
+              disabled={isUploading || Boolean(safetyNumberWarning)}
+              onClick={() => setShowPollModal(true)}
+              className="p-2 cursor-pointer transition-opacity hover:opacity-75 disabled:opacity-50"
+              style={{ color: 'var(--muted)' }}
+            >
+              <BarChart2 size={19} strokeWidth={1.8} />
+            </button>
+
             <div
               className="flex-1 flex items-center px-3.5 py-2 rounded-full border transition-all"
               style={{
@@ -1586,6 +1684,22 @@ export function ConversationPage() {
           </div>
         )}
       </footer>
+
+      {/* Phase D Modals */}
+      <CreatePollModal isOpen={showPollModal} onClose={() => setShowPollModal(false)} />
+
+      <DisappearingTimerModal
+        isOpen={showDisappearingModal}
+        onClose={() => setShowDisappearingModal(false)}
+        partnerId={partnerId}
+      />
+
+      <ChatMediaDrawer
+        isOpen={showMediaDrawer}
+        onClose={() => setShowMediaDrawer(false)}
+        partnerName={partnerName}
+        onOpenLink={(url) => setInterstitialUrl(url)}
+      />
     </div>
   );
 }
