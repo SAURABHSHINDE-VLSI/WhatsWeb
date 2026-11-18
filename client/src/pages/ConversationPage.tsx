@@ -7,6 +7,7 @@ import {
   Plus,
   Mic,
   Send,
+  Clock,
   Check,
   CheckCheck,
   Play,
@@ -237,7 +238,7 @@ export function ConversationPage() {
 
   return (
     <div
-      className="flex flex-col h-dvh w-full overflow-hidden select-none relative"
+      className="flex flex-col h-dvh w-full overflow-hidden select-none relative animate-slide-in"
       style={{
         backgroundColor: 'var(--bg)',
         color: 'var(--ink)',
@@ -520,12 +521,14 @@ export function ConversationPage() {
                       </span>
                     )}
                     <span>{msg.time}</span>
-                    {msg.status === 'read' ? (
-                      <CheckCheck size={14} strokeWidth={1.75} style={{ color: 'var(--accent)' }} />
+                    {msg.status === 'pending' ? (
+                      <span title="Queued offline"><Clock size={13} strokeWidth={1.8} style={{ color: 'var(--muted)' }} /></span>
+                    ) : msg.status === 'read' ? (
+                      <span title="Read"><CheckCheck size={14} strokeWidth={1.75} style={{ color: 'var(--accent)' }} /></span>
                     ) : msg.status === 'delivered' ? (
-                      <CheckCheck size={14} strokeWidth={1.75} style={{ color: 'var(--muted)' }} />
+                      <span title="Delivered"><CheckCheck size={14} strokeWidth={1.75} style={{ color: 'var(--muted)' }} /></span>
                     ) : (
-                      <Check size={14} strokeWidth={1.75} style={{ color: 'var(--muted)' }} />
+                      <span title="Sent"><Check size={14} strokeWidth={1.75} style={{ color: 'var(--muted)' }} /></span>
                     )}
                   </div>
                 </div>

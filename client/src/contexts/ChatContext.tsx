@@ -485,7 +485,10 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
           id: clientMessageId,
           receiverId: activeChatId,
           content: envelope.ciphertext,
+          nonce: envelope.nonce,
+          envelope,
           type,
+          mediaUrl,
           createdAt: now,
           attempts: 0,
         });

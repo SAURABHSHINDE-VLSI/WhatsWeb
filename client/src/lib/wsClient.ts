@@ -1,5 +1,5 @@
 import { WS_BASE, getAccessToken, apiGetWsTicket } from './api';
-import { getOutboxItems, removeFromOutbox } from './db';
+import { getOutboxItems, removeFromOutbox, addToOutbox } from './db';
 
 export type WSConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
 
@@ -388,7 +388,7 @@ class WebSocketClient {
   }
 
   /**
-   * Automatic retry: Flushes queued messages from IndexedDB on reconnect
+   * Automatic retry: Flushes queued messages from IndexedDB on reconnect with exponential backoff
    */
   public async flushOutbox() {
     try {
@@ -401,12 +401,29 @@ class WebSocketClient {
           clientMessageId: item.id,
           receiverId: item.receiverId,
           content: item.content,
-          nonce: 'none',
+          nonce: item.nonce || item.envelope?.nonce || 'none',
+          ephemeralKey: item.envelope?.ephemeralKey,
+          recipientPreKeyId: item.envelope?.oneTimePreKeyId,
+          dhPublicKey: item.envelope?.dhPublicKey,
+          sequence: item.envelope?.sequence,
+          envelope: item.envelope,
           type: item.type,
+          mediaUrl: item.mediaUrl,
           replyToId: item.replyToId,
         });
         if (sent) {
           await removeFromOutbox(item.id);
+        } else {
+          // Increment attempt count and schedule backoff retry
+          item.attempts = (item.attempts || 0) + 1;
+          await addToOutbox(item);
+          const backoffDelay = Math.min(30000, 1000 * Math.pow(2, Math.min(item.attempts, 5)));
+          setTimeout(() => {
+            if (this.socket?.readyState === WebSocket.OPEN) {
+              this.flushOutbox();
+            }
+          }, backoffDelay);
+          break;
         }
       }
     } catch (e) {

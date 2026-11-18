@@ -42,7 +42,10 @@ export interface OutboxItem {
   id: string; // clientMessageId
   receiverId: string;
   content: string;
+  nonce?: string;
+  envelope?: any;
   type: string;
+  mediaUrl?: string;
   replyToId?: string;
   createdAt: string;
   attempts: number;

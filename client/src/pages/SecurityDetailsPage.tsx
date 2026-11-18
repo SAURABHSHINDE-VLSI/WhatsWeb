@@ -4,7 +4,7 @@ import { ChevronLeft, Lock, ShieldCheck, Check, QrCode } from 'lucide-react';
 import QRCode from 'qrcode';
 import { useChat } from '../contexts/ChatContext';
 
-export function SecurityDetailsScreen() {
+export function SecurityDetailsPage() {
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
   const partnerId = id || '';
@@ -223,4 +223,4 @@ export function SecurityDetailsScreen() {
   );
 }
 
-export default SecurityDetailsScreen;
+export default SecurityDetailsPage;

@@ -16,8 +16,7 @@ import ConnectPage from './pages/ConnectPage';
 import RequestsPage from './pages/RequestsPage';
 import InvitePage from './pages/InvitePage';
 import CallsPage from './pages/CallsPage';
-import StatesScreen from './screens/StatesScreen';
-import SecurityDetailsScreen from './screens/SecurityDetailsScreen';
+import SecurityDetailsPage from './pages/SecurityDetailsPage';
 
 interface NavTabItem {
   label: string;
@@ -156,8 +155,7 @@ export default function App() {
                   <Route path="/requests" element={<RequestsPage />} />
                   <Route path="/chat/:id" element={<ConversationPage />} />
                   <Route path="/profile/:id" element={<ProfilePage />} />
-                  <Route path="/security/:id" element={<SecurityDetailsScreen />} />
-                  <Route path="/states" element={<StatesScreen />} />
+                  <Route path="/security/:id" element={<SecurityDetailsPage />} />
                 </Route>
 
                 {/* Fallback route */}
