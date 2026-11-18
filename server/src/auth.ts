@@ -573,7 +573,7 @@ export async function authRoutes(app: FastifyInstance) {
   });
 
   // 10. Account Deletion: full GDPR wipe & username 30-day cooldown reservation
-  app.delete('/api/auth/account', { preHandler: [authenticate] }, async (req, reply) => {
+  const deleteAccountHandler = async (req: any, reply: any) => {
     const payload = req.user as TokenPayload;
     const userId = payload.userId;
 
@@ -612,5 +612,8 @@ export async function authRoutes(app: FastifyInstance) {
     });
 
     return reply.send({ success: true, message: 'Account completely deleted.' });
-  });
+  };
+
+  app.delete('/api/auth/account', { preHandler: [authenticate] }, deleteAccountHandler);
+  app.delete('/api/auth/delete-account', { preHandler: [authenticate] }, deleteAccountHandler);
 }

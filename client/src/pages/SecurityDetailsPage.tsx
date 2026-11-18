@@ -199,7 +199,7 @@ export function SecurityDetailsPage() {
         >
           <div className="flex items-center gap-1.5 font-medium" style={{ color: 'var(--ink)' }}>
             <Lock size={13} style={{ color: 'var(--accent)' }} />
-            <span>Audited Cryptographic Architecture</span>
+            <span>Cryptographic Architecture (Signal Protocol)</span>
           </div>
           <div className="flex justify-between border-b pb-1.5" style={{ borderColor: 'var(--line)' }}>
             <span>Protocol</span>

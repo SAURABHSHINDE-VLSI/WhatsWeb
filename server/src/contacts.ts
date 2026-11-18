@@ -7,7 +7,7 @@ import { checkRateLimit } from './rateLimit.js';
 
 export async function contactRoutes(app: FastifyInstance) {
   // 1. Exact @username lookup (No fuzzy/prefix search to prevent user enumeration)
-  app.get('/api/users/lookup', { preHandler: [authenticate] }, async (req, reply) => {
+  const lookupHandler = async (req: any, reply: any) => {
     const payload = req.user as TokenPayload;
     const currentUserId = payload.userId;
 
@@ -68,7 +68,10 @@ export async function contactRoutes(app: FastifyInstance) {
       hasPendingRequest: Boolean(pendingRequest),
       pendingRequestId: pendingRequest?.id,
     });
-  });
+  };
+
+  app.get('/api/users/lookup', { preHandler: [authenticate] }, lookupHandler);
+  app.get('/api/contacts/lookup', { preHandler: [authenticate] }, lookupHandler);
 
   // 2. Personal Invite Links: Create, Resolve, Revoke
   app.post('/api/invites', { preHandler: [authenticate] }, async (req, reply) => {

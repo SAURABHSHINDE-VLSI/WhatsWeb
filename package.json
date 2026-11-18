@@ -12,7 +12,8 @@
     "build": "npm run build --workspace=client",
     "build:server": "npm run build --workspace=server",
     "build:all": "npm run build --workspace=server && npm run build --workspace=client",
-    "test": "npm run test --workspace=server"
+    "test": "npm run test --workspace=server",
+    "test:e2e": "npm run test:e2e --workspace=server"
   },
   "overrides": {
     "content-disposition": "0.5.4"
