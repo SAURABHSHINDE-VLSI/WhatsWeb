@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify';
 import { WebSocket } from 'ws';
 import { prisma } from './db.js';
 import { sendZeroPlaintextPush } from './push.js';
+import { consumeWsTicket } from './wsTicket.js';
 
 interface SocketSession {
   userId: string;
@@ -48,16 +49,33 @@ export async function websocketRoutes(app: FastifyInstance) {
     let authenticatedUserId: string | null = null;
 
     const url = new URL(req.url, 'http://localhost');
-    const token = url.searchParams.get('token');
+    const ticket = url.searchParams.get('ticket');
 
-    if (token) {
-      try {
-        const decoded = app.jwt.verify<{ userId: string; username: string }>(token);
-        authenticatedUserId = decoded.userId;
-        registerUserSocket(socket, decoded.userId, decoded.username);
-      } catch (err) {
-        sendJson(socket, { event: 'error', message: 'Invalid token in query' });
-      }
+    // Reject direct token usage in query string (prevents URL log leakage)
+    if (url.searchParams.has('token')) {
+      sendJson(socket, {
+        event: 'auth:error',
+        message: 'Tokens in WebSocket query strings are forbidden. Use single-use tickets from POST /api/auth/ws-ticket',
+      });
+      socket.close(4001, 'Unauthorized');
+      return;
+    }
+
+    if (ticket) {
+      consumeWsTicket(ticket)
+        .then((auth) => {
+          if (auth) {
+            authenticatedUserId = auth.userId;
+            registerUserSocket(socket, auth.userId, auth.username);
+            sendJson(socket, { event: 'auth:success', userId: auth.userId });
+          } else {
+            sendJson(socket, { event: 'auth:error', message: 'Invalid or expired single-use ticket' });
+            socket.close(4001, 'Unauthorized');
+          }
+        })
+        .catch(() => {
+          socket.close(4001, 'Unauthorized');
+        });
     }
 
     socket.on('message', async (raw) => {
@@ -66,17 +84,25 @@ export async function websocketRoutes(app: FastifyInstance) {
         const event = payload.event;
         const data = payload.data || {};
 
-        if (event === 'auth') {
-          const authJwt = data.token;
-          try {
-            const decoded = app.jwt.verify<{ userId: string; username: string }>(authJwt);
-            authenticatedUserId = decoded.userId;
-            registerUserSocket(socket, decoded.userId, decoded.username);
-            sendJson(socket, { event: 'auth:success', userId: decoded.userId });
-          } catch (e) {
-            sendJson(socket, { event: 'auth:error', message: 'Authentication failed' });
-            socket.close();
+        if (event === 'auth:ticket') {
+          const auth = await consumeWsTicket(data.ticket);
+          if (auth) {
+            authenticatedUserId = auth.userId;
+            registerUserSocket(socket, auth.userId, auth.username);
+            sendJson(socket, { event: 'auth:success', userId: auth.userId });
+          } else {
+            sendJson(socket, { event: 'auth:error', message: 'Invalid or expired single-use ticket' });
+            socket.close(4001, 'Unauthorized');
           }
+          return;
+        }
+
+        if (event === 'auth') {
+          sendJson(socket, {
+            event: 'auth:error',
+            message: 'Direct JWT transmission disallowed. Exchange for single-use ticket at POST /api/auth/ws-ticket',
+          });
+          socket.close(4001, 'Unauthorized');
           return;
         }
 

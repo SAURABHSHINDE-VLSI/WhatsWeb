@@ -350,3 +350,30 @@ export async function apiDownloadEncryptedMedia(mediaUrl: string): Promise<Uint8
   const arrayBuffer = await res.arrayBuffer();
   return new Uint8Array(arrayBuffer);
 }
+
+// 9. WebSocket Single-Use Ticket API
+export async function apiGetWsTicket(): Promise<string> {
+  const data = await apiRequest<{ ticket: string; expiresIn: number }>('/api/auth/ws-ticket', {
+    method: 'POST',
+  });
+  return data.ticket;
+}
+
+// 10. Coturn Ephemeral TURN Credentials API
+export async function apiGetTurnCredentials(): Promise<{
+  iceServers: RTCIceServer[];
+  ttl: number;
+}> {
+  try {
+    return await apiRequest<{ iceServers: RTCIceServer[]; ttl: number }>('/api/turn-credentials');
+  } catch (err) {
+    // Fall back to public STUN servers if offline or error
+    return {
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+      ],
+      ttl: 3600,
+    };
+  }
+}

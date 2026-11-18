@@ -15,6 +15,9 @@ import { websocketRoutes } from './ws.js';
 import { keyRoutes } from './keys.js';
 import { pushRoutes } from './push.js';
 import { mediaRoutes } from './media.js';
+import { turnRoutes } from './turn.js';
+import { retentionRoutes, startRetentionScheduler } from './retention.js';
+import { wsTicketRoutes } from './wsTicket.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -31,6 +34,25 @@ if (!JWT_SECRET || Buffer.byteLength(JWT_SECRET, 'utf8') < 32) {
 const app = Fastify({
   logger: {
     level: isProduction ? 'info' : 'debug',
+    redact: {
+      paths: [
+        'req.headers.authorization',
+        'req.headers.cookie',
+        'req.headers["sec-websocket-protocol"]',
+        'res.headers["set-cookie"]',
+        '*.token',
+        '*.ticket',
+        '*.credential',
+        '*.password',
+        '*.privateKey',
+        '*.identityKey',
+        '*.identitySignKey',
+        '*.signedPreKeySignature',
+        '*.nonce',
+        '*.secret',
+      ],
+      censor: '[REDACTED]',
+    },
   },
 });
 
@@ -129,6 +151,12 @@ await app.register(websocketRoutes);
 await app.register(keyRoutes);
 await app.register(pushRoutes);
 await app.register(mediaRoutes);
+await app.register(turnRoutes);
+await app.register(retentionRoutes);
+await app.register(wsTicketRoutes);
+
+// Start message retention cleanup scheduler (runs daily in background)
+startRetentionScheduler();
 
 // Static client assets serving (for single-server production deployment)
 const clientDistPath = path.resolve(__dirname, '../../client/dist');

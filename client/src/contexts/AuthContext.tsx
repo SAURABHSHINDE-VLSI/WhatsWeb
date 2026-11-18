@@ -50,7 +50,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             setUser(res.user);
             const token = getAccessToken();
             if (token) {
-              wsClient.connect(token);
+              wsClient.connect();
             }
           }
         }
@@ -75,7 +75,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(data.user);
       wsClient.disconnect();
       if (data.accessToken) {
-        wsClient.connect(data.accessToken);
+        wsClient.connect();
       }
       return { isOnboarded: data.isOnboarded };
     } finally {
@@ -90,7 +90,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(data.user);
       wsClient.disconnect();
       if (data.accessToken) {
-        wsClient.connect(data.accessToken);
+        wsClient.connect();
       }
     } finally {
       setIsLoading(false);

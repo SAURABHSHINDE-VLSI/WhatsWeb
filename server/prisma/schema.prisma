@@ -3,8 +3,8 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = "file:./dev.db"
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 model User {
@@ -21,6 +21,7 @@ model User {
 
   identities              Identity[]
   sessions                Session[]
+  wsTickets               WsTicket[]
   contacts                Contact[]           @relation("UserContacts")
   contactRequestsSent     ContactRequest[]    @relation("SentRequests")
   contactRequestsReceived ContactRequest[]    @relation("ReceivedRequests")
@@ -128,6 +129,9 @@ model Message {
   readAt            DateTime?
 
   @@index([senderId, receiverId])
+  @@index([receiverId, status])
+  @@index([senderId, receiverId, createdAt])
+  @@index([status, deliveredAt, readAt, createdAt])
   @@index([createdAt])
 }
 
@@ -202,3 +206,18 @@ model PushSubscription {
   auth      String
   createdAt DateTime @default(now())
 }
+
+model WsTicket {
+  id        String   @id @default(cuid())
+  ticket    String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([ticket])
+  @@index([expiresAt])
+  @@index([userId])
+}
+

@@ -1,4 +1,4 @@
-import { WS_BASE, getAccessToken } from './api';
+import { WS_BASE, getAccessToken, apiGetWsTicket } from './api';
 import { getOutboxItems, removeFromOutbox } from './db';
 
 export type WSConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
@@ -174,8 +174,8 @@ class WebSocketClient {
     }
   }
 
-  public connect(tokenOverride?: string) {
-    const token = tokenOverride || getAccessToken();
+  public async connect() {
+    const token = getAccessToken();
     if (!token) {
       console.warn('[WS] Cannot connect: no access token');
       return;
@@ -189,7 +189,9 @@ class WebSocketClient {
     this.setStatus(this.reconnectAttempt > 0 ? 'reconnecting' : 'connecting');
 
     try {
-      const url = `${WS_BASE}?token=${encodeURIComponent(token)}`;
+      // Exchange session token for single-use 60s ticket (never passes JWT in URL query string)
+      const ticket = await apiGetWsTicket();
+      const url = `${WS_BASE}?ticket=${encodeURIComponent(ticket)}`;
       this.socket = new WebSocket(url);
 
       this.socket.onopen = () => {

@@ -130,7 +130,12 @@ export async function keyRoutes(app: FastifyInstance) {
   app.get('/api/keys/bundle/:userId', { preHandler: [authenticate] }, async (req, reply) => {
     const payload = req.user as TokenPayload;
     const currentUserId = payload.userId;
-    const { userId: targetUserId } = req.params as { userId: string };
+    const paramsSchema = z.object({ userId: z.string().min(1).max(100) });
+    const parsedParams = paramsSchema.safeParse(req.params);
+    if (!parsedParams.success) {
+      return reply.status(400).send({ error: 'Invalid user ID parameter' });
+    }
+    const targetUserId = parsedParams.data.userId;
 
     // Rate limit bundle fetches: 30 fetches per minute per requester
     const rate = checkRateLimit('bundle-fetch', currentUserId, 30, 60 * 1000);

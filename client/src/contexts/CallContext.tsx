@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
 import { wsClient, WSCallIncomingEvent } from '../lib/wsClient';
 import { useAuth } from './AuthContext';
+import { apiGetTurnCredentials } from '../lib/api';
 
 export type CallState = 'idle' | 'calling' | 'incoming' | 'connected' | 'ended';
 export type CallType = 'voice' | 'video';
@@ -59,6 +60,18 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   const durationTimerRef = useRef<NodeJS.Timeout | null>(null);
   const ringtoneOscRef = useRef<OscillatorNode | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
+  const cachedIceConfigRef = useRef<RTCConfiguration>(ICE_SERVERS);
+
+  // Fetch Coturn ephemeral TURN credentials on mount
+  useEffect(() => {
+    apiGetTurnCredentials()
+      .then((creds) => {
+        if (creds && creds.iceServers && creds.iceServers.length > 0) {
+          cachedIceConfigRef.current = { iceServers: creds.iceServers };
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   // Play calm synthetic ringtone via Web Audio API
   const startRingtone = useCallback((type: 'ring' | 'dial') => {
@@ -146,7 +159,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
 
   // Setup PeerConnection
   const createPeerConnection = useCallback((targetUserId: string): RTCPeerConnection => {
-    const pc = new RTCPeerConnection(ICE_SERVERS);
+    const pc = new RTCPeerConnection(cachedIceConfigRef.current);
     peerConnectionRef.current = pc;
 
     pc.onicecandidate = (event) => {

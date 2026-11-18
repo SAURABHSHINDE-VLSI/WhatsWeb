@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { pipeline } from 'node:stream/promises';
+import { z } from 'zod';
 import { authenticate } from './auth.js';
 
 const UPLOAD_DIR = path.resolve(process.cwd(), 'uploads');
@@ -42,6 +43,12 @@ export async function mediaRoutes(app: FastifyInstance) {
   // Serve raw ciphertext file
   app.get('/api/media/:fileId', async (req, reply) => {
     const { fileId } = req.params as { fileId: string };
+    const fileIdParamSchema = z.string().regex(/^[a-f0-9]{32}\.enc$/);
+    const parsed = fileIdParamSchema.safeParse(fileId);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: 'Invalid media file ID format' });
+    }
+
     const safeFileId = path.basename(fileId);
     const filePath = path.join(UPLOAD_DIR, safeFileId);
 
