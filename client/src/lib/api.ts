@@ -158,22 +158,6 @@ export async function apiFetchPreKeyBundle(userId: string) {
   }>(`/api/keys/bundle/${userId}`);
 }
 
-export async function apiGetAuditLogs() {
-  return apiRequest<{
-    message: string;
-    totalAudited: number;
-    logs: {
-      id: string;
-      clientMessageId: string;
-      senderId: string;
-      receiverId: string;
-      ciphertextSample: string;
-      nonce: string;
-      interceptedAt: string;
-    }[];
-  }>('/api/audit/logs');
-}
-
 // Encrypted Media API
 export async function apiUploadEncryptedMedia(blob: Blob): Promise<{ fileId: string; mediaUrl: string }> {
   const formData = new FormData();

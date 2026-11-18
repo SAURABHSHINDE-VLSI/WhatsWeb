@@ -137,18 +137,6 @@ export async function websocketRoutes(app: FastifyInstance) {
             },
           });
 
-          // Zero-Plaintext Audit: Log sample of ciphertext proving server cannot read payload
-          const ciphertextSnippet = rawCiphertext.length > 32 ? rawCiphertext.slice(0, 32) + '...[ENCRYPTED]' : rawCiphertext;
-          await prisma.serverAuditLog.create({
-            data: {
-              clientMessageId: clientMessageId || message.id,
-              senderId: currentUserId,
-              receiverId,
-              ciphertextSample: ciphertextSnippet,
-              nonce: rawNonce,
-            },
-          }).catch(() => {});
-
           // Acknowledge sender
           sendJson(socket, {
             event: 'message:ack',
@@ -185,7 +173,7 @@ export async function websocketRoutes(app: FastifyInstance) {
               where: { id: currentUserId },
               select: { displayName: true },
             });
-            sendZeroPlaintextPush(receiverId, message.id, sender?.displayName || 'Contact').catch(() => {});
+            sendZeroPlaintextPush(receiverId).catch(() => {});
           }
           return;
         }

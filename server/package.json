@@ -13,6 +13,7 @@
   "dependencies": {
     "@fastify/cookie": "^11.0.2",
     "@fastify/cors": "^10.0.2",
+    "@fastify/helmet": "^13.2.0",
     "@fastify/jwt": "^9.0.4",
     "@fastify/multipart": "^10.1.9",
     "@fastify/static": "^10.1.11",
@@ -21,6 +22,7 @@
     "argon2": "^0.41.1",
     "fastify": "^5.2.1",
     "libsodium-wrappers": "^0.8.4",
+    "prisma": "^6.3.1",
     "web-push": "^4.0.0",
     "ws": "^8.18.0",
     "zod": "^3.24.1"
@@ -30,7 +32,6 @@
     "@types/node": "^22.13.1",
     "@types/web-push": "^3.6.4",
     "@types/ws": "^8.5.14",
-    "prisma": "^6.3.1",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3"
   }

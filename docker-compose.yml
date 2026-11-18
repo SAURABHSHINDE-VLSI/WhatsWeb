@@ -12,7 +12,11 @@ services:
       - NODE_ENV=production
       - PORT=3001
       - HOST=0.0.0.0
-      - JWT_SECRET=editorial-calm-messenger-jwt-super-secret-key-32chars
+      - JWT_SECRET=${JWT_SECRET}
+      - APP_ORIGIN=${APP_ORIGIN:-http://localhost:3001}
+      - VAPID_PUBLIC_KEY=${VAPID_PUBLIC_KEY:-}
+      - VAPID_PRIVATE_KEY=${VAPID_PRIVATE_KEY:-}
+      - VAPID_SUBJECT=${VAPID_SUBJECT:-mailto:admin@whatsus.app}
     volumes:
       - whatsus-db:/app/server/prisma
       - whatsus-uploads:/app/server/uploads

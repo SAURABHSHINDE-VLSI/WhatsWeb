@@ -92,16 +92,6 @@ model Contact {
   @@unique([userId, contactId])
 }
 
-model ServerAuditLog {
-  id               String   @id @default(cuid())
-  clientMessageId  String
-  senderId         String
-  receiverId       String
-  ciphertextSample String   // Demonstrates server intercept is 100% binary ciphertext
-  nonce            String
-  createdAt        DateTime @default(now())
-}
-
 model PushSubscription {
   id        String   @id @default(cuid())
   userId    String

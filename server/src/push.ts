@@ -4,21 +4,23 @@ import { z } from 'zod';
 import { prisma } from './db.js';
 import { TokenPayload, authenticate } from './auth.js';
 
-// Persistent or generated VAPID keys
-const vapidKeys = {
-  publicKey:
-    process.env.VAPID_PUBLIC_KEY ||
-    'BEl62iUYgUivxIkv69yViEuiBIa-Ib9-SkvMeAtA3LFgDzkrxZJjSgSnfckjBJuBkr3qBUYIHBQFLXYp5Nksh8U',
-  privateKey:
-    process.env.VAPID_PRIVATE_KEY ||
-    'UUxI4b6P8k-489q7E6K7Ew0h3gZ9Jc1Y0rL8bM2vK5A',
-};
+// VAPID keys from environment only (never hardcoded)
+const vapidPublicKey = process.env.VAPID_PUBLIC_KEY;
+const vapidPrivateKey = process.env.VAPID_PRIVATE_KEY;
+const vapidSubject = process.env.VAPID_SUBJECT || 'mailto:admin@whatsus.app';
 
-setVapidDetails(
-  'mailto:security@editorial-calm-chat.local',
-  vapidKeys.publicKey,
-  vapidKeys.privateKey
-);
+let pushEnabled = false;
+
+if (vapidPublicKey && vapidPrivateKey) {
+  try {
+    setVapidDetails(vapidSubject, vapidPublicKey, vapidPrivateKey);
+    pushEnabled = true;
+  } catch (err) {
+    console.warn('[Push] Invalid VAPID configuration, web push is disabled:', err);
+  }
+} else {
+  console.warn('[Push] VAPID_PUBLIC_KEY or VAPID_PRIVATE_KEY is missing. Web push is disabled.');
+}
 
 const subscribeSchema = z.object({
   endpoint: z.string().url(),
@@ -33,17 +35,17 @@ const subscribeSchema = z.object({
  * The client service worker receives the notification, fetches the encrypted blob,
  * and decrypts it locally before showing it to the user.
  */
-export async function sendZeroPlaintextPush(receiverId: string, messageId: string, senderName: string) {
+export async function sendZeroPlaintextPush(receiverId: string) {
+  if (!pushEnabled) return;
+
   const subscriptions = await prisma.pushSubscription.findMany({
     where: { userId: receiverId },
   });
 
   if (subscriptions.length === 0) return;
 
-  // STRICT ZERO PLAINTEXT PAYLOAD
+  // Strict generic trigger payload without message IDs or sender identities
   const payload = JSON.stringify({
-    title: senderName || 'New Message',
-    messageId,
     type: 'new_message',
     timestamp: new Date().toISOString(),
   });
@@ -71,8 +73,11 @@ export async function sendZeroPlaintextPush(receiverId: string, messageId: strin
 
 export async function pushRoutes(app: FastifyInstance) {
   // Public VAPID Key
-  app.get('/api/push/vapid-public-key', async () => {
-    return { publicKey: vapidKeys.publicKey };
+  app.get('/api/push/vapid-public-key', async (req, reply) => {
+    if (!vapidPublicKey) {
+      return reply.status(503).send({ error: 'Push notifications are not configured on this server' });
+    }
+    return { publicKey: vapidPublicKey };
   });
 
   // Subscribe

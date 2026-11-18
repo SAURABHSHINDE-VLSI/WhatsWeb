@@ -101,26 +101,4 @@ export async function keyRoutes(app: FastifyInstance) {
       oneTimePreKey: consumedOpk,
     });
   });
-
-  // Zero-plaintext audit endpoint
-  app.get('/api/audit/logs', async (req, reply) => {
-    const logs = await prisma.serverAuditLog.findMany({
-      orderBy: { createdAt: 'desc' },
-      take: 20,
-    });
-
-    return reply.send({
-      message: 'Server intercepted message payloads (100% encrypted ciphertext blobs, zero plaintext)',
-      totalAudited: logs.length,
-      logs: logs.map((l) => ({
-        id: l.id,
-        clientMessageId: l.clientMessageId,
-        senderId: l.senderId,
-        receiverId: l.receiverId,
-        ciphertextSample: l.ciphertextSample,
-        nonce: l.nonce,
-        interceptedAt: l.createdAt,
-      })),
-    });
-  });
 }

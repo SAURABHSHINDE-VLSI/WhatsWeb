@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ChevronLeft, Lock, ShieldCheck, Check, Eye } from 'lucide-react';
+import { ChevronLeft, Lock, ShieldCheck, Check } from 'lucide-react';
 import { useChat } from '../contexts/ChatContext';
-import { apiGetAuditLogs } from '../lib/api';
 
 export function SecurityDetailsScreen() {
   const navigate = useNavigate();
@@ -12,8 +11,6 @@ export function SecurityDetailsScreen() {
   const { activeChat, getSafetyNumber, verifySafetyNumber } = useChat();
   const [safetyNumber, setSafetyNumber] = useState<string>('Loading safety number...');
   const [isVerified, setIsVerified] = useState(false);
-  const [showAuditLogs, setShowAuditLogs] = useState(false);
-  const [auditLogs, setAuditLogs] = useState<any[]>([]);
 
   useEffect(() => {
     let mounted = true;
@@ -28,16 +25,6 @@ export function SecurityDetailsScreen() {
   const handleVerify = async () => {
     await verifySafetyNumber(partnerId, safetyNumber);
     setIsVerified(true);
-  };
-
-  const loadAuditLogs = async () => {
-    setShowAuditLogs(true);
-    try {
-      const res = await apiGetAuditLogs();
-      setAuditLogs(res.logs || []);
-    } catch (e) {
-      console.warn('Audit fetch failed', e);
-    }
   };
 
   const partnerName = activeChat?.name || (partnerId === 'user_maya' || partnerId === '1' ? 'Maya Lin' : 'Contact');
@@ -201,48 +188,6 @@ export function SecurityDetailsScreen() {
             <span className="font-mono" style={{ color: 'var(--ink)' }}>Client-side IndexedDB only</span>
           </div>
         </div>
-
-        {/* Zero-Plaintext Audit Proof Button */}
-        <div>
-          <button
-            type="button"
-            onClick={loadAuditLogs}
-            className="w-full py-2.5 rounded-xl border text-xs font-medium cursor-pointer transition-colors flex items-center justify-center gap-2 hover:bg-[var(--surface-2)]"
-            style={{
-              borderColor: 'var(--line)',
-              color: 'var(--ink)',
-            }}
-          >
-            <Eye size={14} style={{ color: 'var(--accent)' }} />
-            <span>View Server Zero-Plaintext Intercept Proof</span>
-          </button>
-        </div>
-
-        {/* Server Audit Logs View */}
-        {showAuditLogs && (
-          <div
-            className="p-4 rounded-xl border text-xs space-y-2 overflow-x-auto"
-            style={{
-              backgroundColor: 'var(--surface-1)',
-              borderColor: 'var(--line)',
-            }}
-          >
-            <span className="font-medium block" style={{ color: 'var(--ink)' }}>
-              Server-Intercepted Payloads (Zero Plaintext Verified):
-            </span>
-            {auditLogs.length === 0 ? (
-              <span style={{ color: 'var(--muted)' }}>No messages logged yet. Send a message to see raw ciphertext!</span>
-            ) : (
-              auditLogs.map((log) => (
-                <div key={log.id} className="p-2 rounded bg-[var(--bg)] font-mono text-[11px] break-all border" style={{ borderColor: 'var(--line)' }}>
-                  <div style={{ color: 'var(--accent)' }}>Msg: {log.clientMessageId}</div>
-                  <div style={{ color: 'var(--muted)' }}>Payload: {log.ciphertextSample}</div>
-                  <div style={{ color: 'var(--muted)' }}>Nonce: {log.nonce}</div>
-                </div>
-              ))
-            )}
-          </div>
-        )}
       </main>
     </div>
   );

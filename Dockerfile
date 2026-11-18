@@ -1,9 +1,9 @@
-# Production Multi-Stage Dockerfile for WhatsWeb
+# Production Multi-Stage Dockerfile for WhatsUS
 FROM node:20-bookworm-slim AS builder
 
 WORKDIR /app
 
-# Copy root and package manifests
+# Copy package manifests
 COPY package*.json ./
 COPY client/package*.json ./client/
 COPY server/package*.json ./server/
@@ -40,19 +40,26 @@ COPY server/package*.json ./server/
 # Install production dependencies only
 RUN npm ci --omit=dev
 
-# Copy Prisma schema and migrations
+# Copy Prisma schema and entrypoint script
 COPY --from=builder /app/server/prisma ./server/prisma
+COPY --from=builder /app/server/docker-entrypoint.sh ./server/docker-entrypoint.sh
+RUN chmod +x ./server/docker-entrypoint.sh
+
+# Generate Prisma client for runner environment
 RUN cd server && npx prisma generate
 
 # Copy built server and client dist
 COPY --from=builder /app/server/dist ./server/dist
 COPY --from=builder /app/client/dist ./client/dist
 
-# Create uploads directory
-RUN mkdir -p /app/server/uploads
+# Create uploads directory and set non-root user permissions
+RUN mkdir -p /app/server/uploads && chown -R node:node /app
+
+USER node
 
 EXPOSE 3001
 
-VOLUME ["/app/server/prisma", "/app/server/uploads"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD node -e "fetch('http://localhost:3001/api/health').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))"
 
-CMD ["node", "server/dist/index.js"]
+ENTRYPOINT ["/app/server/docker-entrypoint.sh"]

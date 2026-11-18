@@ -31,49 +31,6 @@ export async function authenticate(request: FastifyRequest, reply: FastifyReply)
 }
 
 export async function authRoutes(app: FastifyInstance) {
-  // Seed demo users on startup if empty
-  const userCount = await prisma.user.count();
-  if (userCount === 0) {
-    const demoPasswordHash = await argon2.hash('password123');
-    await prisma.user.createMany({
-      data: [
-        {
-          id: 'user_alex',
-          username: 'alex',
-          displayName: 'Alex Mercer',
-          phoneNumber: '+1 (555) 019-2834',
-          passwordHash: demoPasswordHash,
-          avatarTint: 0,
-        },
-        {
-          id: 'user_maya',
-          username: 'maya',
-          displayName: 'Maya Lin',
-          phoneNumber: '+1 (555) 014-9921',
-          passwordHash: demoPasswordHash,
-          avatarTint: 1,
-        },
-        {
-          id: 'user_julian',
-          username: 'julian',
-          displayName: 'Julian Vance',
-          phoneNumber: '+1 (555) 018-7733',
-          passwordHash: demoPasswordHash,
-          avatarTint: 2,
-        },
-        {
-          id: 'user_amara',
-          username: 'amara',
-          displayName: 'Amara Rao',
-          phoneNumber: '+1 (555) 012-3456',
-          passwordHash: demoPasswordHash,
-          avatarTint: 3,
-        },
-      ],
-    });
-    console.log('[Auth] Seeded 4 default users (password: password123)');
-  }
-
   // Register
   app.post('/api/auth/register', async (req, reply) => {
     const parse = registerSchema.safeParse(req.body);
@@ -185,10 +142,11 @@ export async function authRoutes(app: FastifyInstance) {
       },
     });
 
+    const isProduction = process.env.NODE_ENV === 'production';
     reply.setCookie('refreshToken', rawRefreshToken, {
       httpOnly: true,
-      secure: false,
-      sameSite: 'lax',
+      secure: isProduction,
+      sameSite: 'strict',
       path: '/api/auth',
       maxAge: 30 * 24 * 60 * 60,
     });
@@ -269,7 +227,13 @@ export async function authRoutes(app: FastifyInstance) {
       await prisma.session.deleteMany({ where: { refreshTokenHash } }).catch(() => {});
     }
 
-    reply.clearCookie('refreshToken', { path: '/api/auth' });
+    const isProduction = process.env.NODE_ENV === 'production';
+    reply.clearCookie('refreshToken', {
+      path: '/api/auth',
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: 'strict',
+    });
     return reply.send({ success: true });
   });
 }

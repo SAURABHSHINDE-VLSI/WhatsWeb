@@ -4,6 +4,7 @@ import cookie from '@fastify/cookie';
 import jwt from '@fastify/jwt';
 import websocket from '@fastify/websocket';
 import fastifyStatic from '@fastify/static';
+import helmet from '@fastify/helmet';
 import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -17,22 +18,86 @@ import { mediaRoutes } from './media.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+const isProduction = process.env.NODE_ENV === 'production';
+
+// Strict secret enforcement: Refuse to start if JWT_SECRET is missing or shorter than 32 bytes
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET || Buffer.byteLength(JWT_SECRET, 'utf8') < 32) {
+  console.error('FATAL: JWT_SECRET environment variable is missing or shorter than 32 random bytes.');
+  process.exit(1);
+}
+
 const app = Fastify({
   logger: {
-    level: 'info',
+    level: isProduction ? 'info' : 'debug',
   },
 });
 
-// Plugins
+// Security headers with strict Content Security Policy
+await app.register(helmet, {
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", 'https://accounts.google.com/gsi/client'],
+      frameSrc: ["'self'", 'https://accounts.google.com/gsi/'],
+      connectSrc: [
+        "'self'",
+        'wss:',
+        'ws:',
+        'https://accounts.google.com/gsi/',
+      ],
+      styleSrc: [
+        "'self'",
+        "'unsafe-inline'",
+        'https://accounts.google.com/gsi/style',
+        'https://fonts.googleapis.com',
+      ],
+      fontSrc: ["'self'", 'https://fonts.gstatic.com'],
+      imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
+      mediaSrc: ["'self'", 'blob:'],
+      objectSrc: ["'none'"],
+      baseUri: ["'self'"],
+      formAction: ["'self'"],
+    },
+  },
+  hsts: isProduction
+    ? {
+        maxAge: 31536000,
+        includeSubDomains: true,
+        preload: true,
+      }
+    : false,
+  referrerPolicy: {
+    policy: 'no-referrer',
+  },
+});
+
+// Explicit CORS allowlist from APP_ORIGIN
+const rawOrigin = process.env.APP_ORIGIN;
+const allowedOrigins = rawOrigin
+  ? rawOrigin.split(',').map((o) => o.trim()).filter(Boolean)
+  : (isProduction ? [] : ['http://localhost:5173', 'http://127.0.0.1:5173', 'http://localhost:3001', 'http://127.0.0.1:3001']);
+
+if (isProduction && allowedOrigins.length === 0) {
+  console.error('FATAL: APP_ORIGIN environment variable is required in production (e.g. APP_ORIGIN=https://129.225.107.71.sslip.io)');
+  process.exit(1);
+}
+
 await app.register(cors, {
-  origin: true,
+  origin: (origin, cb) => {
+    if (!origin) return cb(null, true);
+    if (allowedOrigins.includes(origin)) {
+      return cb(null, true);
+    }
+    return cb(new Error(`Origin ${origin} is not allowed by CORS allowlist`), false);
+  },
   credentials: true,
 });
 
 await app.register(cookie);
 
 await app.register(jwt, {
-  secret: process.env.JWT_SECRET || 'editorial-calm-messenger-jwt-super-secret-key-32chars',
+  secret: JWT_SECRET,
   cookie: {
     cookieName: 'refreshToken',
     signed: false,

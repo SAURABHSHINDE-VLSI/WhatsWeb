@@ -9,7 +9,7 @@ This document defines the security architecture, cryptographic primitives, threa
 ### 1.1 Adversary Profiles
 1. **Malicious or Compromised Server (Untrusted Cloud Host)**:
    - Controls database queries, HTTP endpoints, WebSocket routing, and file uploads.
-   - May inspect stored tables (`messages`, `users`, `prekey_bundles`, `server_audit_logs`, `uploads`).
+   - May inspect stored tables (`messages`, `users`, `prekey_bundles`, `uploads`).
    - May attempt passive wiretapping, message tampering, replay attacks, or selective dropping.
 2. **Network Adversary (Man-in-the-Middle / ISP / Public Wi-Fi)**:
    - Intercepts, inspects, or modifies transport-layer packets.
@@ -173,6 +173,5 @@ To detect active Man-in-the-Middle attacks (e.g. server substituting public keys
 The server database enforces zero-plaintext visibility:
 - **`Message.content`**: Stores Base64 ciphertext only.
 - **`Message.nonce`**: Stores the 24-byte random initialization vector.
-- **`ServerAuditLog`**: Logs incoming message previews to verify encryption; all entries contain `...[ENCRYPTED]` tags.
 - **`PushSubscription`**: Push payloads contain only generic trigger metadata (`{"type":"new_message"}`), leaving APNs and FCM blind to message content.
 - **Media Uploads**: Files sent to `/api/media/upload` are encrypted with an ephemeral XSalsa20 symmetric key on the client before leaving the device. The media encryption key is sent exclusively within the E2EE message stream.

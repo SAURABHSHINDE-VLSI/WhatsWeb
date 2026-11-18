@@ -162,13 +162,6 @@ cd server
 npm run build
 ```
 
-### Cryptographic Security & Zero-Plaintext Audit
-Inspect the server audit log in real-time by navigating to `http://localhost:5173/security/user_maya` or calling:
-```bash
-curl http://localhost:3001/api/audit/logs
-```
-Notice that every intercepted payload displays only `...[ENCRYPTED]` ciphertext and random nonces.
-
 ---
 
 ## 📄 License
