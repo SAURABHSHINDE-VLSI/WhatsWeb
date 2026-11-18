@@ -61,7 +61,7 @@ await app.register(helmet, {
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", 'https://accounts.google.com/gsi/client'],
+      scriptSrc: ["'self'", "'wasm-unsafe-eval'", "'unsafe-eval'", 'https://accounts.google.com/gsi/client'],
       frameSrc: ["'self'", 'https://accounts.google.com/gsi/'],
       connectSrc: [
         "'self'",

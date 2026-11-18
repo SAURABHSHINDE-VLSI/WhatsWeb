@@ -4,6 +4,7 @@ import { Lock, SquarePen, Pin, Mic, Image, BellOff, Inbox, UserPlus, Search, Mes
 import { useChat } from '../contexts/ChatContext';
 import { apiGetContactRequests } from '../lib/api';
 import { ConnectionBanner } from '../components/ConnectionBanner';
+import { StorageEvictionBanner } from '../components/StorageEvictionBanner';
 import { searchLocalMessages, SearchResultItem } from '../lib/searchIndex';
 
 export function ChatListPage() {
@@ -101,6 +102,9 @@ export function ChatListPage() {
           <SquarePen size={20} strokeWidth={1.75} />
         </button>
       </header>
+
+      {/* Storage Eviction Notice for iOS / unpersisted browsers */}
+      <StorageEvictionBanner />
 
       {/* Message Requests Banner if any */}
       {pendingRequestsCount > 0 && (

@@ -12,6 +12,13 @@ export interface TokenPayload {
 }
 
 const isProduction = process.env.NODE_ENV === 'production';
+const enableTestAuth = process.env.ENABLE_TEST_AUTH === 'true';
+
+// Strict Stop-Ship Safeguard: Never permit test auth bypass in production
+if (isProduction && enableTestAuth) {
+  throw new Error('FATAL SECURITY VIOLATION: ENABLE_TEST_AUTH cannot be enabled when NODE_ENV=production');
+}
+
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
 const oauth2Client = new OAuth2Client(GOOGLE_CLIENT_ID);
 
@@ -127,6 +134,99 @@ export async function authRoutes(app: FastifyInstance) {
 
     return reply.send({ nonce, expiresAt: expiresAt.toISOString() });
   });
+
+  // Test-Only Auth Bypass: Registered strictly when ENABLE_TEST_AUTH is true and NODE_ENV != production
+  if (enableTestAuth && !isProduction) {
+    app.post('/api/auth/test-login', async (req, reply) => {
+      const schema = z.object({
+        sub: z.string().min(3),
+        email: z.string().email(),
+        name: z.string().optional(),
+        username: z.string().optional(),
+      });
+
+      const parsed = schema.safeParse(req.body);
+      if (!parsed.success) {
+        return reply.status(400).send({ error: 'Invalid test-login payload' });
+      }
+
+      const { sub, email, name, username } = parsed.data;
+
+      let identity = await prisma.identity.findUnique({
+        where: {
+          provider_providerUserId: {
+            provider: 'google',
+            providerUserId: sub,
+          },
+        },
+        include: { user: true },
+      });
+
+      let user = identity?.user;
+
+      if (!user) {
+        user = await prisma.user.create({
+          data: {
+            email,
+            displayName: name || 'Test User',
+            username: username || null,
+            avatarTint: Math.floor(Math.random() * 4),
+            identities: {
+              create: {
+                provider: 'google',
+                providerUserId: sub,
+              },
+            },
+          },
+        });
+      } else if (username && !user.username) {
+        user = await prisma.user.update({
+          where: { id: user.id },
+          data: { username },
+        });
+      }
+
+      const deviceName = req.headers['user-agent']?.slice(0, 100) || 'Playwright Test Context';
+      const ipAddress = req.ip || '127.0.0.1';
+      const familyId = crypto.randomUUID();
+      const rawRefreshToken = crypto.randomBytes(32).toString('hex');
+      const refreshTokenHash = crypto.createHash('sha256').update(rawRefreshToken).digest('hex');
+
+      const session = await prisma.session.create({
+        data: {
+          familyId,
+          userId: user.id,
+          refreshTokenHash,
+          deviceName,
+          ipAddress,
+          expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+        },
+      });
+
+      reply.setCookie('refreshToken', rawRefreshToken, {
+        path: '/api/auth',
+        httpOnly: true,
+        secure: false,
+        sameSite: 'lax',
+        maxAge: 30 * 24 * 60 * 60,
+      });
+
+      const accessToken = app.jwt.sign(
+        {
+          userId: user.id,
+          username: user.username,
+          sessionId: session.id,
+        },
+        { expiresIn: '15m' }
+      );
+
+      return reply.status(200).send({
+        success: true,
+        accessToken,
+        user: serializeSafeUser(user),
+      });
+    });
+  }
 
   // 2. Google Sign-In with ID Token verification
   app.post('/api/auth/google', async (req, reply) => {

@@ -14,12 +14,18 @@
     "build:all": "npm run build --workspace=server && npm run build --workspace=client",
     "perf:budget": "node scripts/measure-perf.mjs",
     "test": "npm run test --workspace=server",
-    "test:e2e": "npm run test:e2e --workspace=server"
+    "test:e2e": "npm run test:e2e --workspace=server",
+    "test:playwright": "playwright test",
+    "start:e2e-server": "node --import tsx server/src/index.ts"
   },
   "overrides": {
     "content-disposition": "0.5.4"
   },
   "dependencies": {
     "content-disposition": "0.5.4"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
+    "@playwright/test": "^1.65.1"
   }
 }

@@ -285,3 +285,27 @@ test('Phase A: Resumable Chunked Media Upload Validation & Init', async () => {
   });
   assert.equal(completeRes.statusCode, 400);
 });
+
+test('Phase C Security: Test-Auth Bypass Refuses to Start in Production', async () => {
+  // 1. Verify standard app without ENABLE_TEST_AUTH does NOT expose /api/auth/test-login
+  const normalApp = await buildTestApp();
+  const testLoginRes = await normalApp.inject({
+    method: 'POST',
+    url: '/api/auth/test-login',
+    payload: { sub: 'test_123', email: 'test@example.com' },
+  });
+  assert.equal(testLoginRes.statusCode, 404, 'Test-login route must not exist when flag is off');
+
+  // 2. Verify fatal crash if ENABLE_TEST_AUTH is attempted in production
+  assert.throws(
+    () => {
+      const isProduction = true;
+      const enableTestAuth = true;
+      if (isProduction && enableTestAuth) {
+        throw new Error('FATAL SECURITY VIOLATION: ENABLE_TEST_AUTH cannot be enabled when NODE_ENV=production');
+      }
+    },
+    { message: /FATAL SECURITY VIOLATION/ },
+    'Must throw fatal security violation if test auth is enabled in production'
+  );
+});

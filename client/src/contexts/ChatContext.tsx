@@ -323,16 +323,20 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
           // 1. Control: Edit
           if (control.controlType === 'edit' && control.targetMessageId) {
             const db = await getDB();
-            const existing = await db.get('messages', control.targetMessageId);
+            let existing = await db.get('messages', control.targetMessageId);
+            if (!existing) {
+              const all = await db.getAll('messages');
+              existing = all.find((m) => m.clientMessageId === control.targetMessageId);
+            }
             // Verify sender matches original sender, message is not deleted, and within 15-minute window
             if (existing && existing.senderId === newMsg.senderId && !existing.isDeletedForEveryone) {
               const ageMs = Date.now() - new Date(existing.createdAt).getTime();
               const editCount = control.editCounter || 1;
               if (ageMs <= 15 * 60 * 1000 && editCount > (existing.editCounter || 0)) {
-                await updateMessageContentInDB(control.targetMessageId, control.newContent, editCount);
+                await updateMessageContentInDB(existing.id, control.newContent, editCount);
                 setMessages((prev) =>
                   prev.map((m) =>
-                    m.id === control.targetMessageId
+                    m.id === control.targetMessageId || m.clientMessageId === control.targetMessageId || m.id === existing?.id
                       ? { ...m, content: control.newContent, isEdited: true, editedAt: new Date().toISOString(), editCounter: editCount }
                       : m
                   )
@@ -346,17 +350,21 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
           // 2. Control: Delete for everyone
           if (control.controlType === 'delete_for_everyone' && control.targetMessageId) {
             const db = await getDB();
-            const existing = await db.get('messages', control.targetMessageId);
+            let existing = await db.get('messages', control.targetMessageId);
+            if (!existing) {
+              const all = await db.getAll('messages');
+              existing = all.find((m) => m.clientMessageId === control.targetMessageId);
+            }
             if (existing && existing.senderId === newMsg.senderId) {
-              await markMessageDeletedForEveryoneInDB(control.targetMessageId);
+              await markMessageDeletedForEveryoneInDB(existing.id);
               setMessages((prev) =>
                 prev.map((m) =>
-                  m.id === control.targetMessageId
+                  m.id === control.targetMessageId || m.clientMessageId === control.targetMessageId || m.id === existing?.id
                     ? { ...m, isDeletedForEveryone: true, content: 'This message was deleted', mediaUrl: undefined }
                     : m
                 )
               );
-              removeMessageFromSearch(control.targetMessageId);
+              removeMessageFromSearch(existing.id);
             }
             return;
           }
@@ -365,7 +373,11 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
           if (control.controlType === 'reaction' && control.targetMessageId) {
             await updateMessageReactionInDB(control.targetMessageId, control.reaction);
             setMessages((prev) =>
-              prev.map((m) => (m.id === control.targetMessageId ? { ...m, reaction: control.reaction } : m))
+              prev.map((m) =>
+                m.id === control.targetMessageId || m.clientMessageId === control.targetMessageId
+                  ? { ...m, reaction: control.reaction }
+                  : m
+              )
             );
             return;
           }
@@ -476,7 +488,8 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       content: string,
       type: 'text' | 'photo' | 'voice' = 'text',
       replyTo?: any,
-      mediaUrl?: string
+      mediaUrl?: string,
+      isControl: boolean = false
     ) => {
       if (!user || !activeChatId) return;
 
@@ -495,41 +508,43 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       const clientMessageId = 'msg_' + Math.random().toString(36).slice(2) + Date.now();
       const now = new Date().toISOString();
 
-      const optimisticMsg: LocalMessage = {
-        id: clientMessageId,
-        clientMessageId,
-        senderId: user.id,
-        receiverId: activeChatId,
-        partnerId: activeChatId,
-        content,
-        type,
-        mediaUrl,
-        status: 'pending',
-        replyQuote: replyTo
-          ? {
-              name: replyTo.name || replyTo.author,
-              snippet: replyTo.snippet || replyTo.text,
-            }
-          : undefined,
-        createdAt: now,
-        isSent: true,
-      };
-
-      setMessages((prev) => [...prev, optimisticMsg]);
-      await saveMessagesToDB([optimisticMsg]);
-      addMessageToSearch(optimisticMsg);
-
-      setChats((prev) =>
-        prev.map((c) =>
-          c.id === activeChatId
+      if (!isControl) {
+        const optimisticMsg: LocalMessage = {
+          id: clientMessageId,
+          clientMessageId,
+          senderId: user.id,
+          receiverId: activeChatId,
+          partnerId: activeChatId,
+          content,
+          type,
+          mediaUrl,
+          status: 'pending',
+          replyQuote: replyTo
             ? {
-                ...c,
-                snippet: type === 'photo' ? 'Photo' : type === 'voice' ? 'Voice note' : content.trim(),
-                lastMessageTime: new Date(now).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                name: replyTo.name || replyTo.author,
+                snippet: replyTo.snippet || replyTo.text,
               }
-            : c
-        )
-      );
+            : undefined,
+          createdAt: now,
+          isSent: true,
+        };
+
+        setMessages((prev) => [...prev, optimisticMsg]);
+        await saveMessagesToDB([optimisticMsg]);
+        addMessageToSearch(optimisticMsg);
+
+        setChats((prev) =>
+          prev.map((c) =>
+            c.id === activeChatId
+              ? {
+                  ...c,
+                  snippet: type === 'photo' ? 'Photo' : type === 'voice' ? 'Voice note' : content.trim(),
+                  lastMessageTime: new Date(now).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                }
+              : c
+          )
+        );
+      }
 
       const sent = wsClient.sendMessage({
         clientMessageId,
@@ -646,12 +661,12 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         timestamp: Date.now(),
       });
 
-      await sendMessage(controlPayload, 'text');
+      await sendMessage(controlPayload, 'text', undefined, undefined, true);
 
       await updateMessageContentInDB(messageId, cleanContent, editCounter);
       setMessages((prev) =>
         prev.map((m) =>
-          m.id === messageId
+          m.id === messageId || m.clientMessageId === messageId
             ? { ...m, content: cleanContent, isEdited: true, editedAt: new Date().toISOString(), editCounter }
             : m
         )
@@ -685,12 +700,12 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         timestamp: Date.now(),
       });
 
-      await sendMessage(controlPayload, 'text');
+      await sendMessage(controlPayload, 'text', undefined, undefined, true);
 
       await markMessageDeletedForEveryoneInDB(messageId);
       setMessages((prev) =>
         prev.map((m) =>
-          m.id === messageId
+          m.id === messageId || m.clientMessageId === messageId
             ? { ...m, isDeletedForEveryone: true, content: 'This message was deleted', mediaUrl: undefined }
             : m
         )
@@ -714,7 +729,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         timestamp: Date.now(),
       });
 
-      await sendMessage(controlPayload, 'text');
+      await sendMessage(controlPayload, 'text', undefined, undefined, true);
 
       setMessages((prev) =>
         prev.map((m) => {

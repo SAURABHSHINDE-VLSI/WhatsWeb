@@ -7,6 +7,7 @@ export const WS_BASE =
 
 // In-Memory Token Storage ONLY (Fail-secure, zero token persistence in localStorage)
 let currentAccessToken: string | null = null;
+let refreshPromise: Promise<boolean> | null = null;
 
 export function setAccessToken(token: string | null) {
   currentAccessToken = token;
@@ -42,7 +43,9 @@ export async function apiRequest<T = any>(
   options: RequestInit = {}
 ): Promise<T> {
   const headers = new Headers(options.headers || {});
-  headers.set('Content-Type', 'application/json');
+  if (options.body && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
 
   if (currentAccessToken) {
     headers.set('Authorization', `Bearer ${currentAccessToken}`);
@@ -76,24 +79,34 @@ export async function apiRequest<T = any>(
 }
 
 export async function tryRefreshToken(): Promise<boolean> {
-  try {
-    const res = await fetch(`${API_BASE}/api/auth/refresh`, {
-      method: 'POST',
-      credentials: 'include',
-    });
-    if (!res.ok) {
-      setAccessToken(null);
-      return false;
-    }
-    const data = await res.json();
-    if (data.accessToken) {
-      setAccessToken(data.accessToken);
-      return true;
-    }
-  } catch (err) {
-    setAccessToken(null);
+  if (refreshPromise) {
+    return refreshPromise;
   }
-  return false;
+
+  refreshPromise = (async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/refresh`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+      if (!res.ok) {
+        setAccessToken(null);
+        return false;
+      }
+      const data = await res.json();
+      if (data.accessToken) {
+        setAccessToken(data.accessToken);
+        return true;
+      }
+    } catch (err) {
+      setAccessToken(null);
+    } finally {
+      refreshPromise = null;
+    }
+    return false;
+  })();
+
+  return refreshPromise;
 }
 
 // 1. Health & Config

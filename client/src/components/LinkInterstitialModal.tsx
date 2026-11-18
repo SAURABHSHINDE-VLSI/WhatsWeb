@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { ExternalLink, ShieldAlert, X } from 'lucide-react';
 
 interface LinkInterstitialModalProps {
@@ -7,6 +7,22 @@ interface LinkInterstitialModalProps {
 }
 
 export const LinkInterstitialModal: React.FC<LinkInterstitialModalProps> = ({ url, onClose }) => {
+  const proceedBtnRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!url) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    // Auto-focus the proceed action button for keyboard accessibility
+    proceedBtnRef.current?.focus();
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [url, onClose]);
+
   if (!url) return null;
 
   let hostname = '';
@@ -84,6 +100,7 @@ export const LinkInterstitialModal: React.FC<LinkInterstitialModalProps> = ({ ur
             Cancel
           </button>
           <button
+            ref={proceedBtnRef}
             type="button"
             onClick={handleProceed}
             className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-transform active:scale-95"

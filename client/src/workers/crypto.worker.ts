@@ -160,16 +160,35 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
       }
 
       const header = encryptedBytes.slice(0, headerBytes);
-      const cipherBody = encryptedBytes.slice(headerBytes);
-
       const state = sodium.crypto_secretstream_xchacha20poly1305_init_pull(header, mediaKey);
-      const pullRes = sodium.crypto_secretstream_xchacha20poly1305_pull(state, cipherBody, null);
 
-      if (pullRes === false) {
-        throw new Error('Cryptographic verification failed: ciphertext altered or corrupted');
+      const chunkSize = 64 * 1024;
+      const cipherChunkSize = chunkSize + sodium.crypto_secretstream_xchacha20poly1305_ABYTES;
+      let offset = headerBytes;
+      const plainChunks: Uint8Array[] = [];
+      let totalPlainLen = 0;
+
+      while (offset < encryptedBytes.length) {
+        const end = Math.min(offset + cipherChunkSize, encryptedBytes.length);
+        const cipherChunk = encryptedBytes.slice(offset, end);
+        const pullRes = sodium.crypto_secretstream_xchacha20poly1305_pull(state, cipherChunk, null);
+
+        if (pullRes === false) {
+          throw new Error('Cryptographic verification failed: ciphertext altered or corrupted');
+        }
+
+        const part = (pullRes as { message: Uint8Array }).message;
+        plainChunks.push(part);
+        totalPlainLen += part.length;
+        offset = end;
       }
 
-      const plaintextBytes = (pullRes as { message: Uint8Array }).message;
+      const plaintextBytes = new Uint8Array(totalPlainLen);
+      let outOffset = 0;
+      for (const p of plainChunks) {
+        plaintextBytes.set(p, outOffset);
+        outOffset += p.length;
+      }
 
       self.postMessage(
         {

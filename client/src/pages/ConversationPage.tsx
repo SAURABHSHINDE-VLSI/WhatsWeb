@@ -32,6 +32,7 @@ import { ConnectionBanner } from '../components/ConnectionBanner';
 import { LinkInterstitialModal } from '../components/LinkInterstitialModal';
 import { renderFormattedMessageText } from '../lib/textFormat';
 import { VoiceNotePlayer } from '../components/VoiceNotePlayer';
+import { MessageErrorBoundary } from '../components/MessageErrorBoundary';
 import { AudioRecorderController, VoiceRecordingResult } from '../lib/audioRecorder';
 import { saveDraftToDB, getDraftFromDB, LocalMessage } from '../lib/db';
 import { searchLocalMessages } from '../lib/searchIndex';
@@ -406,6 +407,14 @@ export function ConversationPage() {
     wsStatus,
   } = useChat();
 
+  const partnerName = activeChat?.name || activeChat?.username || 'Conversation';
+  const partnerInitials = partnerName
+    .split(' ')
+    .map((p) => p[0])
+    .join('')
+    .slice(0, 2)
+    .toUpperCase();
+
   const { startCall } = useCall();
 
   const [inputText, setInputText] = useState('');
@@ -427,6 +436,7 @@ export function ConversationPage() {
   const [isSearching, setIsSearching] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<{ id: string; snippet: string }[]>([]);
+  const [liveAnnouncement, setLiveAnnouncement] = useState<string>('');
 
   // Voice recording
   const [isRecording, setIsRecording] = useState(false);
@@ -557,13 +567,60 @@ export function ConversationPage() {
     previousMessageCount.current = currentCount;
 
     if (diff > 0) {
+      const latest = displayMessages[displayMessages.length - 1];
+      if (latest && latest.sender === 'them') {
+        const snippet = latest.text ? latest.text.slice(0, 80) : 'a new message';
+        setLiveAnnouncement(`New message from ${partnerName || 'contact'}: ${snippet}`);
+      }
       if (isAtBottom) {
         scrollToBottom('smooth');
       } else {
         setUnseenCount((prev) => prev + diff);
       }
     }
-  }, [displayMessages.length, isAtBottom, scrollToBottom]);
+  }, [displayMessages, isAtBottom, scrollToBottom, partnerName]);
+
+  // Accessibility: Handle Escape key to dismiss modals, selections, and search
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (interstitialUrl) {
+          setInterstitialUrl(null);
+          e.preventDefault();
+        } else if (deleteConfirmMsg) {
+          setDeleteConfirmMsg(null);
+          e.preventDefault();
+        } else if (forwardingMessage) {
+          setForwardingMessage(null);
+          e.preventDefault();
+        } else if (selectedMessageId) {
+          setSelectedMessageId(null);
+          e.preventDefault();
+        } else if (replyTarget) {
+          setReplyTarget(null);
+          e.preventDefault();
+        } else if (editingMessage) {
+          setEditingMessage(null);
+          setInputText('');
+          e.preventDefault();
+        } else if (isSearching) {
+          setIsSearching(false);
+          setSearchQuery('');
+          e.preventDefault();
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [
+    interstitialUrl,
+    deleteConfirmMsg,
+    forwardingMessage,
+    selectedMessageId,
+    replyTarget,
+    editingMessage,
+    isSearching,
+  ]);
 
   // Initial scroll to bottom on mount / chat open
   useEffect(() => {
@@ -770,13 +827,6 @@ export function ConversationPage() {
 
   const isTyping = isPartnerTyping(partnerId);
   const isOnline = isUserOnline(partnerId);
-  const partnerName = activeChat?.name || activeChat?.username || 'Conversation';
-  const partnerInitials = partnerName
-    .split(' ')
-    .map((p) => p[0])
-    .join('')
-    .slice(0, 2)
-    .toUpperCase();
 
   const virtualItems = virtualizer.getVirtualItems();
 
@@ -1065,6 +1115,7 @@ export function ConversationPage() {
             onClick={() => handleStartReply(selectedMsg)}
             className="p-1 hover:text-[var(--accent)] transition-colors"
             title="Reply"
+            aria-label="Reply to message"
           >
             <CornerUpLeft size={15} />
           </button>
@@ -1075,6 +1126,7 @@ export function ConversationPage() {
             onClick={() => handleCopyText(selectedMsg.text || '')}
             className="p-1 hover:text-[var(--accent)] transition-colors"
             title="Copy"
+            aria-label="Copy message text"
           >
             <Copy size={15} />
           </button>
@@ -1085,6 +1137,7 @@ export function ConversationPage() {
             onClick={() => handleForwardSelect(selectedMsg)}
             className="p-1 hover:text-[var(--accent)] transition-colors"
             title="Forward"
+            aria-label="Forward message"
           >
             <Forward size={15} />
           </button>
@@ -1095,6 +1148,7 @@ export function ConversationPage() {
             onClick={() => handleToggleStar(selectedMsg.id)}
             className="p-1 hover:text-[var(--accent)] transition-colors"
             title={selectedMsg.isStarred ? 'Unstar' : 'Star'}
+            aria-label={selectedMsg.isStarred ? 'Unstar message' : 'Star message'}
           >
             <Star size={15} className={selectedMsg.isStarred ? 'fill-[var(--accent)] text-[var(--accent)]' : ''} />
           </button>
@@ -1106,6 +1160,7 @@ export function ConversationPage() {
               onClick={() => handleStartEdit(selectedMsg)}
               className="p-1 hover:text-[var(--accent)] transition-colors"
               title="Edit (within 15 minutes)"
+              aria-label="Edit message"
             >
               <Edit2 size={15} />
             </button>
@@ -1117,6 +1172,7 @@ export function ConversationPage() {
             onClick={() => setDeleteConfirmMsg(selectedMsg)}
             className="p-1 hover:text-[var(--heart)] transition-colors"
             title="Delete"
+            aria-label="Delete message"
           >
             <Trash2 size={15} />
           </button>
@@ -1261,7 +1317,7 @@ export function ConversationPage() {
         style={{ overflowAnchor: 'none' }}
       >
         {displayMessages.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-center py-20 gap-2 select-none opacity-60">
+          <div className="flex flex-col items-center justify-center h-full text-center py-20 gap-2 select-none">
             <Lock size={20} style={{ color: 'var(--accent)' }} />
             <p className="text-xs max-w-xs font-serif" style={{ color: 'var(--muted)' }}>
               End-to-End Encrypted conversation started. All correspondence is protected by the Double Ratchet.
@@ -1290,20 +1346,27 @@ export function ConversationPage() {
                     transform: `translateY(${virtualRow.start}px)`,
                   }}
                 >
-                  <MessageRow
-                    msg={msg}
-                    isSelected={selectedMessageId === msg.id}
-                    playingVoiceId={playingVoiceId}
-                    onSelect={selectMessage}
-                    onToggleVoice={toggleVoicePlayback}
-                    onOpenLink={(url) => setInterstitialUrl(url)}
-                  />
+                  <MessageErrorBoundary messageId={msg.id}>
+                    <MessageRow
+                      msg={msg}
+                      isSelected={selectedMessageId === msg.id}
+                      playingVoiceId={playingVoiceId}
+                      onSelect={selectMessage}
+                      onToggleVoice={toggleVoicePlayback}
+                      onOpenLink={(url) => setInterstitialUrl(url)}
+                    />
+                  </MessageErrorBoundary>
                 </div>
               );
             })}
           </div>
         )}
       </main>
+
+      {/* Accessibility: Screen-reader live region announcing new incoming messages */}
+      <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">
+        {liveAnnouncement}
+      </div>
 
       {/* Jump to latest button */}
       {!isAtBottom && displayMessages.length > 0 && (

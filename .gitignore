@@ -16,4 +16,6 @@ Thumbs.db
 server/uploads/*
 !server/uploads/.gitkeep
 uploads/
+playwright-report/
+test-results/
 

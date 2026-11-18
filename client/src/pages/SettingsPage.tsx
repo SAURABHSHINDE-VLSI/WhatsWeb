@@ -382,7 +382,7 @@ export function SettingsPage() {
               </div>
               {user?.email && (
                 <div className="text-[11px] mt-0.5" style={{ color: 'var(--muted)' }}>
-                  {user.email} <span className="opacity-75">(Recovery email, private)</span>
+                  {user.email} <span>(Recovery email, private)</span>
                 </div>
               )}
             </div>
@@ -431,7 +431,7 @@ export function SettingsPage() {
                 <p className="text-xs font-semibold" style={{ color: 'var(--ink)' }}>
                   Anyone
                 </p>
-                <p className="text-[11px]" style={{ color: 'var(--muted)' }}>
+                <p className="text-[11px]" style={{ color: privacyMode === 'anyone' ? 'var(--ink)' : 'var(--muted)' }}>
                   Strangers land in Requests
                 </p>
               </div>
@@ -458,7 +458,7 @@ export function SettingsPage() {
                 <p className="text-xs font-semibold" style={{ color: 'var(--ink)' }}>
                   Contacts Only
                 </p>
-                <p className="text-[11px]" style={{ color: 'var(--muted)' }}>
+                <p className="text-[11px]" style={{ color: privacyMode === 'contacts_only' ? 'var(--ink)' : 'var(--muted)' }}>
                   Only accepted/invited
                 </p>
               </div>
@@ -483,6 +483,9 @@ export function SettingsPage() {
 
           <button
             type="button"
+            role="switch"
+            aria-checked={linkPreviewsEnabled}
+            aria-label="Link Previews toggle"
             onClick={handleToggleLinkPreviews}
             className="w-11 h-6 rounded-full relative transition-colors cursor-pointer"
             style={{
@@ -516,6 +519,9 @@ export function SettingsPage() {
 
           <button
             type="button"
+            role="switch"
+            aria-checked={readReceiptsEnabled}
+            aria-label="Read Receipts toggle"
             onClick={handleToggleReadReceipts}
             className="w-11 h-6 rounded-full relative transition-colors cursor-pointer"
             style={{
@@ -662,6 +668,9 @@ export function SettingsPage() {
 
           <button
             type="button"
+            role="switch"
+            aria-checked={notificationsEnabled}
+            aria-label="Notifications toggle"
             onClick={handleToggleNotifications}
             className="w-11 h-6 rounded-full relative transition-colors cursor-pointer"
             style={{
