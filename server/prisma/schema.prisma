@@ -85,9 +85,10 @@ model PreKeyBundle {
   id                    String          @id @default(cuid())
   userId                String          @unique
   user                  User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  identityKey           String          // base64 public identity key
+  identityKey           String          // base64 public X25519 DH key
+  identitySignKey       String          // base64 public Ed25519 signing key
   signedPreKey          String          // base64 public signed pre-key
-  signedPreKeySignature String          // base64 signature
+  signedPreKeySignature String          // base64 Ed25519 signature
   oneTimePreKeys        OneTimePreKey[]
   updatedAt             DateTime        @updatedAt
 }
@@ -115,6 +116,9 @@ model Message {
   nonce             String    // 24-byte random nonce (Base64)
   ephemeralKey      String?   // Sender's ephemeral public key for X3DH / DH Ratchet
   recipientPreKeyId Int?      // One-time pre-key ID if consumed
+  dhPublicKey       String?   // Current DH ratchet public key
+  sequence          Int?      // Sequence number in ratchet chain
+  envelope          String?   // Opaque versioned E2EE envelope JSON
   type              String    @default("text") // text | photo | voice
   mediaUrl          String?
   status            String    @default("sent") // sent | delivered | read

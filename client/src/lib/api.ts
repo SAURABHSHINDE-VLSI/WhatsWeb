@@ -293,9 +293,11 @@ export async function apiGetMessages(partnerId: string) {
 // 7. E2EE Pre-Key Bundle API
 export async function apiUploadPreKeyBundle(bundle: {
   identityKey: string;
+  identitySignKey: string;
   signedPreKey: string;
   signedPreKeySignature: string;
   oneTimePreKeys: { keyId: number; publicKey: string }[];
+  isReRegistration?: boolean;
 }) {
   return apiRequest('/api/keys/bundle', {
     method: 'POST',
@@ -307,9 +309,11 @@ export async function apiFetchPreKeyBundle(userId: string) {
   return apiRequest<{
     userId: string;
     identityKey: string;
+    identitySignKey: string;
     signedPreKey: string;
     signedPreKeySignature: string;
     oneTimePreKey?: { keyId: number; publicKey: string } | null;
+    lowOpkWarning?: boolean;
   }>(`/api/keys/bundle/${userId}`);
 }
 

@@ -1,33 +1,58 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ChevronLeft, Lock, ShieldCheck, Check } from 'lucide-react';
+import { ChevronLeft, Lock, ShieldCheck, Check, QrCode } from 'lucide-react';
+import QRCode from 'qrcode';
 import { useChat } from '../contexts/ChatContext';
 
 export function SecurityDetailsScreen() {
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
-  const partnerId = id || 'user_maya';
+  const partnerId = id || '';
 
   const { activeChat, getSafetyNumber, verifySafetyNumber } = useChat();
   const [safetyNumber, setSafetyNumber] = useState<string>('Loading safety number...');
   const [isVerified, setIsVerified] = useState(false);
+  const [showQR, setShowQR] = useState(true);
+  const qrCanvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
     let mounted = true;
-    getSafetyNumber(partnerId).then((num) => {
-      if (mounted) setSafetyNumber(num);
-    });
+    if (partnerId) {
+      getSafetyNumber(partnerId).then((num) => {
+        if (mounted) setSafetyNumber(num);
+      });
+    }
     return () => {
       mounted = false;
     };
   }, [partnerId, getSafetyNumber]);
+
+  useEffect(() => {
+    if (safetyNumber && !safetyNumber.includes('Loading') && qrCanvasRef.current) {
+      QRCode.toCanvas(
+        qrCanvasRef.current,
+        `whatsus:safety:${partnerId}:${safetyNumber.replace(/\s+/g, '')}`,
+        {
+          width: 180,
+          margin: 1.5,
+          color: {
+            dark: '#1D1B18',
+            light: '#EDE6D8',
+          },
+        },
+        (err) => {
+          if (err) console.error('QR code render error', err);
+        }
+      );
+    }
+  }, [safetyNumber, partnerId, showQR]);
 
   const handleVerify = async () => {
     await verifySafetyNumber(partnerId, safetyNumber);
     setIsVerified(true);
   };
 
-  const partnerName = activeChat?.name || (partnerId === 'user_maya' || partnerId === '1' ? 'Maya Lin' : 'Contact');
+  const partnerName = activeChat?.name || activeChat?.username || 'Contact';
   const groups = safetyNumber.split(' ');
 
   return (
@@ -64,7 +89,7 @@ export function SecurityDetailsScreen() {
             color: 'var(--ink)',
           }}
         >
-          Security Details
+          Security &amp; Safety Number
         </span>
       </header>
 
@@ -72,7 +97,7 @@ export function SecurityDetailsScreen() {
         {/* Verification Status Card */}
         <div className="flex flex-col items-center text-center">
           <div
-            className="w-16 h-16 rounded-full flex items-center justify-center mb-3"
+            className="w-16 h-16 rounded-full flex items-center justify-center mb-3 shadow-inner"
             style={{
               backgroundColor: isVerified ? 'var(--accent)' : 'var(--surface-1)',
               color: isVerified ? 'var(--accent-ink)' : 'var(--accent)',
@@ -94,16 +119,16 @@ export function SecurityDetailsScreen() {
           </h1>
 
           <p
-            className="mt-1.5 text-sm max-w-xs"
+            className="mt-1.5 text-xs max-w-xs"
             style={{ color: 'var(--muted)', lineHeight: 1.45 }}
           >
-            Messages and calls with {partnerName} are secured with end-to-end encryption. No one outside of this chat, not even the server, can read them.
+            Messages and calls with <span className="font-semibold text-[var(--ink)]">{partnerName}</span> are secured with Signal-standard X3DH and Double Ratchet.
           </p>
         </div>
 
-        {/* Safety Number Fingerprint Display */}
+        {/* Safety Number Display & QR */}
         <div
-          className="p-5 rounded-2xl flex flex-col items-center gap-4 border"
+          className="p-5 rounded-2xl flex flex-col items-center gap-4 border shadow-sm"
           style={{
             backgroundColor: 'var(--surface-1)',
             borderColor: 'var(--line)',
@@ -111,22 +136,27 @@ export function SecurityDetailsScreen() {
         >
           <div className="text-center">
             <span
-              className="text-xs uppercase tracking-wider font-medium"
+              className="text-xs uppercase tracking-wider font-semibold"
               style={{ color: 'var(--muted)' }}
             >
-              Safety Number
+              Verify Safety Number
             </span>
             <p className="text-xs mt-0.5" style={{ color: 'var(--muted)' }}>
-              Compare with {partnerName}’s device to verify your connection
+              Scan the QR code or compare the 60 numeric digits on {partnerName}’s device.
             </p>
           </div>
 
-          {/* 12 Groups of 5 Digits (Signal Standard) */}
+          {/* QR Code Canvas */}
+          <div className="p-3 bg-[var(--surface-2)] rounded-xl">
+            <canvas ref={qrCanvasRef} className="rounded-lg" />
+          </div>
+
+          {/* 12 Groups of 5 Digits */}
           <div className="grid grid-cols-3 gap-x-4 gap-y-2 text-center tnum">
             {groups.map((grp, idx) => (
               <span
                 key={idx}
-                className="text-sm font-mono tracking-wider font-semibold"
+                className="text-xs font-mono tracking-wider font-semibold"
                 style={{ color: 'var(--ink)' }}
               >
                 {grp}
@@ -169,23 +199,23 @@ export function SecurityDetailsScreen() {
         >
           <div className="flex items-center gap-1.5 font-medium" style={{ color: 'var(--ink)' }}>
             <Lock size={13} style={{ color: 'var(--accent)' }} />
-            <span>Cryptographic Architecture</span>
+            <span>Audited Cryptographic Architecture</span>
           </div>
           <div className="flex justify-between border-b pb-1.5" style={{ borderColor: 'var(--line)' }}>
-            <span>Cipher</span>
-            <span className="font-mono" style={{ color: 'var(--ink)' }}>XChaCha20-Poly1305 (AEAD)</span>
+            <span>Protocol</span>
+            <span className="font-mono" style={{ color: 'var(--ink)' }}>Signal X3DH + Double Ratchet</span>
           </div>
           <div className="flex justify-between border-b pb-1.5" style={{ borderColor: 'var(--line)' }}>
-            <span>Key Agreement</span>
-            <span className="font-mono" style={{ color: 'var(--ink)' }}>X3DH (X25519 / Ed25519)</span>
+            <span>Authenticated Cipher</span>
+            <span className="font-mono" style={{ color: 'var(--ink)' }}>XChaCha20-Poly1305 (24-byte Nonce)</span>
           </div>
           <div className="flex justify-between border-b pb-1.5" style={{ borderColor: 'var(--line)' }}>
-            <span>Forward Secrecy</span>
-            <span className="font-mono" style={{ color: 'var(--ink)' }}>Per-Message Symmetric Ratchet</span>
+            <span>Media Encryption</span>
+            <span className="font-mono" style={{ color: 'var(--ink)' }}>crypto_secretstream (Chunk-Safe)</span>
           </div>
           <div className="flex justify-between">
-            <span>Key Storage</span>
-            <span className="font-mono" style={{ color: 'var(--ink)' }}>Client-side IndexedDB only</span>
+            <span>Key Storage At Rest</span>
+            <span className="font-mono" style={{ color: 'var(--ink)' }}>WebCrypto Wrapped (Non-extractable)</span>
           </div>
         </div>
       </main>

@@ -9,6 +9,13 @@ export interface WSMessageNewEvent {
   senderId: string;
   receiverId: string;
   content: string;
+  ciphertext?: string;
+  nonce?: string;
+  ephemeralKey?: string;
+  recipientPreKeyId?: number | null;
+  dhPublicKey?: string;
+  sequence?: number;
+  envelope?: any;
   type: string;
   mediaUrl?: string;
   status: string;
@@ -298,6 +305,12 @@ class WebSocketClient {
     clientMessageId: string;
     receiverId: string;
     content: string;
+    nonce: string;
+    ephemeralKey?: string;
+    recipientPreKeyId?: number | null;
+    dhPublicKey?: string;
+    sequence?: number;
+    envelope?: any;
     type?: string;
     mediaUrl?: string;
     replyToId?: string;
@@ -386,6 +399,7 @@ class WebSocketClient {
           clientMessageId: item.id,
           receiverId: item.receiverId,
           content: item.content,
+          nonce: 'none',
           type: item.type,
           replyToId: item.replyToId,
         });

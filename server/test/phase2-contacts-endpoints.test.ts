@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import Fastify from 'fastify';
 import cookie from '@fastify/cookie';
 import jwt from '@fastify/jwt';
+import _sodium from 'libsodium-wrappers';
 import { prisma } from '../src/db.js';
 import { authRoutes } from '../src/auth.js';
 import { contactRoutes } from '../src/contacts.js';
@@ -132,18 +133,28 @@ test('Phase 2 Integration: Contact Requests, Lookups, Invites & Blocking', async
   assert.equal(inviterInfo.email, undefined);
 
   // 8. Blocking stops Key Bundle fetches
-  // First upload dummy pre-key bundle for Alice
-  await app.inject({
+  // First upload valid pre-key bundle for Alice
+  await _sodium.ready;
+  const sodium = _sodium;
+  const signKp = sodium.crypto_sign_keypair();
+  const dhKp = sodium.crypto_box_keypair();
+  const spkKp = sodium.crypto_box_keypair();
+  const spkSig = sodium.crypto_sign_detached(spkKp.publicKey, signKp.privateKey);
+  const opkKp = sodium.crypto_box_keypair();
+
+  const bundleUploadRes = await app.inject({
     method: 'POST',
     url: '/api/keys/bundle',
     headers: { Authorization: `Bearer ${token1}` },
     payload: {
-      identityKey: 'id-key-alice',
-      signedPreKey: 'spk-alice',
-      signedPreKeySignature: 'sig-alice',
-      oneTimePreKeys: [{ keyId: 1, publicKey: 'opk-1' }],
+      identityKey: sodium.to_base64(dhKp.publicKey),
+      identitySignKey: sodium.to_base64(signKp.publicKey),
+      signedPreKey: sodium.to_base64(spkKp.publicKey),
+      signedPreKeySignature: sodium.to_base64(spkSig),
+      oneTimePreKeys: [{ keyId: 1, publicKey: sodium.to_base64(opkKp.publicKey) }],
     },
   });
+  assert.equal(bundleUploadRes.statusCode, 201);
 
   // Bob fetches Alice's bundle (should succeed)
   const bundleBeforeBlock = await app.inject({

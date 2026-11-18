@@ -97,6 +97,9 @@ export async function websocketRoutes(app: FastifyInstance) {
             nonce,
             ephemeralKey,
             recipientPreKeyId,
+            dhPublicKey,
+            sequence,
+            envelope,
             type = 'text',
             mediaUrl,
             replyToId,
@@ -178,7 +181,7 @@ export async function websocketRoutes(app: FastifyInstance) {
           const initialStatus = receiverOnline ? 'delivered' : 'sent';
           const now = new Date();
 
-          // Save strictly encrypted ciphertext to database
+          // Save strictly encrypted ciphertext & opaque envelope to database
           const message = await prisma.message.create({
             data: {
               clientMessageId,
@@ -186,8 +189,11 @@ export async function websocketRoutes(app: FastifyInstance) {
               receiverId,
               content: rawCiphertext, // Encrypted Base64 ciphertext
               nonce: rawNonce,
-              ephemeralKey,
+              ephemeralKey: ephemeralKey || null,
               recipientPreKeyId: typeof recipientPreKeyId === 'number' ? recipientPreKeyId : null,
+              dhPublicKey: dhPublicKey || null,
+              sequence: typeof sequence === 'number' ? sequence : null,
+              envelope: typeof envelope === 'string' ? envelope : envelope ? JSON.stringify(envelope) : null,
               type,
               mediaUrl,
               replyToId,
@@ -205,7 +211,7 @@ export async function websocketRoutes(app: FastifyInstance) {
             createdAt: message.createdAt,
           });
 
-          // Forward encrypted blob to receiver
+          // Forward encrypted blob & envelope to receiver
           if (receiverOnline) {
             broadcastToUser(receiverId, {
               event: 'message:new',
@@ -219,6 +225,9 @@ export async function websocketRoutes(app: FastifyInstance) {
                 nonce: rawNonce,
                 ephemeralKey: message.ephemeralKey,
                 recipientPreKeyId: message.recipientPreKeyId,
+                dhPublicKey: message.dhPublicKey,
+                sequence: message.sequence,
+                envelope: message.envelope,
                 type: message.type,
                 mediaUrl: message.mediaUrl,
                 status: initialStatus,

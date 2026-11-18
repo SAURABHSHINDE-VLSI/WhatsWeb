@@ -24,11 +24,11 @@ import {
   getOrCreateSignedPreKey,
   generateOneTimePreKeys,
   getOrCreateSession,
-  initializeReceivingSession,
   encryptMessage,
   decryptMessage,
   computeSafetyNumber,
   markSafetyNumberVerified,
+  E2EEnvelope,
 } from '../lib/crypto';
 import { encryptAndUploadMedia } from '../lib/encryptedMedia';
 import { wsClient, WSConnectionStatus } from '../lib/wsClient';
@@ -54,6 +54,8 @@ interface ChatContextValue {
   isUserOnline: (userId: string) => boolean;
   getSafetyNumber: (partnerId: string) => Promise<string>;
   verifySafetyNumber: (partnerId: string, safetyNum: string) => Promise<void>;
+  safetyNumberWarning: boolean;
+  acknowledgeSafetyNumber: (partnerId: string) => Promise<void>;
   wsStatus: WSConnectionStatus;
   refreshChats: () => Promise<void>;
 }
@@ -67,6 +69,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   const [messages, setMessages] = useState<LocalMessage[]>([]);
   const [typingMap, setTypingMap] = useState<Record<string, boolean>>({});
   const [onlineSet, setOnlineSet] = useState<Set<string>>(new Set());
+  const [safetyNumberWarning, setSafetyNumberWarning] = useState<boolean>(false);
   const [wsStatus, setWsStatus] = useState<WSConnectionStatus>('disconnected');
   const [, startTransition] = useTransition();
 
@@ -83,6 +86,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
 
         await apiUploadPreKeyBundle({
           identityKey: identity.dhPublicKey,
+          identitySignKey: identity.signPublicKey,
           signedPreKey: spk.publicKey,
           signedPreKeySignature: spk.signature,
           oneTimePreKeys: opks.map((k) => ({
@@ -125,7 +129,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
           id: c.id,
           name: c.name,
           username: c.username,
-          phoneNumber: c.phoneNumber,
+          avatarUrl: c.avatarUrl,
           tint: c.tint,
           snippet: c.lastMessage ? c.lastMessage.content : 'No messages yet',
           lastMessageTime: c.lastMessage
@@ -149,7 +153,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     refreshChats();
   }, [refreshChats]);
 
-  // 4. Load messages when activeChatId changes
+  // 4. Load messages when activeChatId changes (Zero re-decryption on stored history)
   useEffect(() => {
     if (!activeChatId || !user) {
       setMessages([]);
@@ -159,40 +163,66 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     let isCurrent = true;
 
     async function loadChatMessages() {
-      // 1. Instant load from IndexedDB
+      // 1. Instant load from IndexedDB (already decrypted and safely stored)
       const localMsgs = await getMessagesForPartner(activeChatId!);
       if (isCurrent && localMsgs.length > 0) {
         setMessages(localMsgs);
       }
 
-      // 2. Fetch latest from API
+      // Check session safety number warning state
+      const { session } = await getOrCreateSession(activeChatId!).catch(() => ({ session: null as any }));
+      if (session?.safetyNumberChanged && !session?.verifiedSafetyNumber) {
+        setSafetyNumberWarning(true);
+      } else {
+        setSafetyNumberWarning(false);
+      }
+
+      // 2. Fetch latest messages from API and only decrypt NEW messages
       try {
         const res = await apiGetMessages(activeChatId!);
         if (isCurrent && res?.messages) {
-          const mapped: LocalMessage[] = [];
+          const localMap = new Map(localMsgs.map((m) => [m.id, m]));
+          const toSave: LocalMessage[] = [];
+          const combinedList: LocalMessage[] = [];
+
           for (const m of res.messages) {
+            // If already decrypted and stored locally, reuse local plaintext!
+            if (localMap.has(m.id)) {
+              combinedList.push(localMap.get(m.id)!);
+              continue;
+            }
+
             let plainContent = m.content;
-            // If encrypted on server, decrypt if needed or use local copy
             if (m.nonce && m.nonce !== 'none') {
               try {
-                plainContent = await decryptMessage(activeChatId!, m.content, m.nonce, {
-                  senderId: m.senderId,
-                  receiverId: m.receiverId,
-                  timestamp: m.createdAt,
-                });
+                const envelope: E2EEnvelope = m.envelope
+                  ? (typeof m.envelope === 'string' ? JSON.parse(m.envelope) : m.envelope)
+                  : {
+                      version: 1,
+                      type: m.ephemeralKey ? 'prekey' : 'whisper',
+                      senderIdentityKey: m.ephemeralKey || '',
+                      ephemeralKey: m.ephemeralKey,
+                      oneTimePreKeyId: m.recipientPreKeyId,
+                      dhPublicKey: m.dhPublicKey || m.ephemeralKey || '',
+                      sequence: m.sequence || 0,
+                      previousChainLength: 0,
+                      ciphertext: m.content,
+                      nonce: m.nonce,
+                    };
+
+                plainContent = await decryptMessage(activeChatId!, envelope);
               } catch (e) {
-                // If already decrypted or key ratcheted, fall back to stored local copy
-                const existing = localMsgs.find((lm) => lm.id === m.id);
-                if (existing) plainContent = existing.content;
+                console.warn('[E2EE] Decryption failure for message', m.id, e);
+                plainContent = '[Could not decrypt message — ask contact to resend]';
               }
             }
 
-            mapped.push({
+            const item: LocalMessage = {
               id: m.id,
               clientMessageId: m.clientMessageId || m.id,
               senderId: m.senderId,
               receiverId: m.receiverId,
-              partnerId: m.senderId === user!.id ? m.receiverId : m.senderId,
+              partnerId: activeChatId!,
               content: plainContent,
               type: m.type,
               mediaUrl: m.mediaUrl,
@@ -200,17 +230,22 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
               replyToId: m.replyToId,
               createdAt: m.createdAt,
               isSent: m.senderId === user!.id,
-            });
+            };
+
+            toSave.push(item);
+            combinedList.push(item);
           }
 
-          setMessages(mapped);
-          await saveMessagesToDB(mapped);
+          if (toSave.length > 0) {
+            await saveMessagesToDB(toSave);
+          }
 
-          // Mark unread messages as read
-          markAsRead(activeChatId!);
+          if (isCurrent) {
+            setMessages(combinedList);
+          }
         }
       } catch (err) {
-        console.warn('[ChatContext] Network error fetching messages, using local cache', err);
+        console.warn('[ChatContext] Network error fetching chat history', err);
       }
     }
 
@@ -221,38 +256,41 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     };
   }, [activeChatId, user]);
 
-  // 5. WebSocket Event Listeners
+  // 5. Setup WebSocket event subscriptions
   useEffect(() => {
     if (!user) return;
 
-    // Incoming message (Encrypted blob)
-    const unsubMsg = wsClient.onMessage(async (newMsg: any) => {
+    const unsubMsg = wsClient.onMessage(async (newMsg) => {
       const isForActiveChat = activeChatId && (newMsg.senderId === activeChatId || newMsg.receiverId === activeChatId);
       const partnerId = newMsg.senderId === user.id ? newMsg.receiverId : newMsg.senderId;
 
-      let decryptedContent = newMsg.ciphertext || newMsg.content;
+      let decryptedContent = '';
 
-      // E2EE Decryption
-      if (newMsg.ciphertext && newMsg.nonce && newMsg.nonce !== 'none') {
+      // E2EE Decryption using Double Ratchet
+      if (newMsg.content && newMsg.nonce && newMsg.nonce !== 'none') {
         try {
-          if (newMsg.ephemeralKey) {
-            await initializeReceivingSession(
-              partnerId,
-              newMsg.senderId,
-              newMsg.ephemeralKey,
-              newMsg.recipientPreKeyId
-            ).catch(() => {});
-          }
+          const envelope: E2EEnvelope = newMsg.envelope
+            ? (typeof newMsg.envelope === 'string' ? JSON.parse(newMsg.envelope) : newMsg.envelope)
+            : {
+                version: 1,
+                type: newMsg.ephemeralKey ? 'prekey' : 'whisper',
+                senderIdentityKey: newMsg.ephemeralKey || '',
+                ephemeralKey: newMsg.ephemeralKey,
+                oneTimePreKeyId: newMsg.recipientPreKeyId,
+                dhPublicKey: newMsg.dhPublicKey || newMsg.ephemeralKey || '',
+                sequence: newMsg.sequence || 0,
+                previousChainLength: 0,
+                ciphertext: newMsg.ciphertext || newMsg.content,
+                nonce: newMsg.nonce,
+              };
 
-          decryptedContent = await decryptMessage(partnerId, newMsg.ciphertext, newMsg.nonce, {
-            senderId: newMsg.senderId,
-            receiverId: newMsg.receiverId,
-            timestamp: newMsg.createdAt,
-          });
+          decryptedContent = await decryptMessage(partnerId, envelope);
         } catch (e) {
-          console.warn('[E2EE] Decryption fallback', e);
-          decryptedContent = newMsg.content || '[Encrypted message]';
+          console.warn('[E2EE] Decryption failed for incoming message', e);
+          decryptedContent = '[Could not decrypt message — ask contact to resend]';
         }
+      } else {
+        decryptedContent = newMsg.content || '';
       }
 
       const localMsg: LocalMessage = {
@@ -354,7 +392,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     };
   }, [user, activeChatId]);
 
-  // 6. E2EE Send message action
+  // 6. E2EE Send message action: Strictly Fail-Closed, Zero Plaintext Fallback
   const sendMessage = useCallback(
     async (
       content: string,
@@ -366,6 +404,29 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
 
       const clientMessageId = `cm_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
       const now = new Date().toISOString();
+
+      // Establish or fetch session
+      let { session, initialEnvelopeParams } = await getOrCreateSession(activeChatId).catch(() => ({
+        session: null as any,
+        initialEnvelopeParams: undefined,
+      }));
+
+      if (!session) {
+        // Fetch recipient's pre-key bundle and verify signature
+        const bundle = await apiFetchPreKeyBundle(activeChatId);
+        const result = await getOrCreateSession(activeChatId, bundle);
+        session = result.session;
+        initialEnvelopeParams = result.initialEnvelopeParams;
+      }
+
+      // Check safety number changed alert
+      if (session.safetyNumberChanged && !session.verifiedSafetyNumber) {
+        setSafetyNumberWarning(true);
+        throw new Error('Safety number has changed for this contact. Sending is blocked until acknowledged.');
+      }
+
+      // Encrypt strictly using Double Ratchet (Throws if encryption fails - NO PLAINTEXT FALLBACK)
+      const envelope = await encryptMessage(activeChatId, content.trim(), initialEnvelopeParams);
 
       // Optimistic local UI insertion with decrypted content
       const optimisticMsg: LocalMessage = {
@@ -403,50 +464,27 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         )
       );
 
-      // Perform End-to-End Encryption
-      let ciphertext = content.trim();
-      let nonce = 'none';
-      let ephemeralKey: string | undefined;
-      let opkId: number | undefined;
-
-      try {
-        let bundleForFirstMessage: any = null;
-        let session = await getOrCreateSession(activeChatId).catch(() => null);
-
-        if (!session) {
-          bundleForFirstMessage = await apiFetchPreKeyBundle(activeChatId);
-          session = await getOrCreateSession(activeChatId, bundleForFirstMessage);
-          opkId = bundleForFirstMessage?.oneTimePreKey?.keyId;
-          ephemeralKey = session.rootKey;
-        }
-
-        const encrypted = await encryptMessage(activeChatId, content.trim(), {
-          senderId: user.id,
-          receiverId: activeChatId,
-          timestamp: now,
-        });
-
-        ciphertext = encrypted.ciphertext;
-        nonce = encrypted.nonce;
-      } catch (err) {
-        console.warn('[E2EE] Session encryption fallback', err);
-      }
-
-      // Transmit strictly ciphertext blob over WebSocket
+      // Transmit strictly ciphertext envelope over WebSocket
       const sent = wsClient.sendMessage({
         clientMessageId,
         receiverId: activeChatId,
-        content: ciphertext, // Server stores only ciphertext!
+        content: envelope.ciphertext,
+        nonce: envelope.nonce,
+        ephemeralKey: envelope.ephemeralKey,
+        recipientPreKeyId: envelope.oneTimePreKeyId,
+        dhPublicKey: envelope.dhPublicKey,
+        sequence: envelope.sequence,
+        envelope,
         type,
         mediaUrl,
       });
 
       if (!sent) {
-        console.log('[ChatContext] Network offline, adding message to outbox queue');
+        console.log('[ChatContext] Network offline, adding message to encrypted outbox queue');
         await addToOutbox({
           id: clientMessageId,
           receiverId: activeChatId,
-          content: ciphertext,
+          content: envelope.ciphertext,
           type,
           createdAt: now,
           attempts: 0,
@@ -461,15 +499,23 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       if (!user || !activeChatId) return;
       try {
         const metadata = await encryptAndUploadMedia(file);
-        // Send E2EE message referencing encrypted media blob URL
+        // Send E2EE message carrying encrypted media metadata inside ciphertext
         await sendMessage(
-          file.name || 'Photo attachment',
+          JSON.stringify({
+            caption: file.name || 'Attachment',
+            mediaUrl: metadata.mediaUrl,
+            key: metadata.key,
+            header: metadata.header,
+            mimeType: metadata.mimeType,
+            fileSize: metadata.fileSize,
+          }),
           file.type.startsWith('audio/') ? 'voice' : 'photo',
           undefined,
           metadata.mediaUrl
         );
-      } catch (err) {
+      } catch (err: any) {
         console.error('[ChatContext] Failed to encrypt/upload media', err);
+        alert(err.message || 'Media upload and encryption failed');
       }
     },
     [user, activeChatId, sendMessage]
@@ -542,6 +588,19 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   const verifySafetyNumber = useCallback(
     async (partnerId: string, safetyNum: string) => {
       await markSafetyNumberVerified(partnerId, safetyNum);
+      setSafetyNumberWarning(false);
+    },
+    []
+  );
+
+  const acknowledgeSafetyNumber = useCallback(
+    async (partnerId: string) => {
+      const myIdentity = await getOrCreateIdentityKey();
+      let bundle = await apiFetchPreKeyBundle(partnerId).catch(() => null);
+      const theirIdentity = bundle?.identityKey || myIdentity.dhPublicKey;
+      const num = await computeSafetyNumber(myIdentity.dhPublicKey, theirIdentity);
+      await markSafetyNumberVerified(partnerId, num);
+      setSafetyNumberWarning(false);
     },
     []
   );
@@ -566,6 +625,8 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         isUserOnline,
         getSafetyNumber,
         verifySafetyNumber,
+        safetyNumberWarning,
+        acknowledgeSafetyNumber,
         wsStatus,
         refreshChats,
       }}
