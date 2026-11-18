@@ -1,24 +1,66 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ChevronRight, Bell, Download, HardDrive, Shield, Users, LogOut } from 'lucide-react';
+import {
+  ChevronRight,
+  Bell,
+  Download,
+  Shield,
+  Smartphone,
+  LogOut,
+  Trash2,
+  Lock,
+  Check,
+  AlertTriangle,
+} from 'lucide-react';
 import { useTheme, ThemePreference } from '../contexts/ThemeContext';
 import { usePWAInstall } from '../hooks/usePWAInstall';
 import { useAuth } from '../contexts/AuthContext';
 import { requestAndSubscribePush, unsubscribePush } from '../lib/pushClient';
+import {
+  apiGetSessions,
+  apiRevokeSession,
+  apiLogoutOtherSessions,
+  apiUpdatePrivacy,
+  apiDeleteAccount,
+  SessionInfo,
+} from '../lib/api';
 
 export function SettingsPage() {
   const navigate = useNavigate();
   const { theme, setTheme } = useTheme();
-  const { user, switchUser, logout } = useAuth();
-  const { canInstall, promptInstall, isIOS, isInstalled } = usePWAInstall();
+  const { user, logout, refreshProfile } = useAuth();
+  const { canInstall, promptInstall, isInstalled } = usePWAInstall();
+
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
-  const [showInstallAlert, setShowInstallAlert] = useState(false);
+  const [sessions, setSessions] = useState<SessionInfo[]>([]);
+  const [isLoadingSessions, setIsLoadingSessions] = useState(false);
+  const [privacyMode, setPrivacyMode] = useState<'anyone' | 'contacts_only'>(
+    user?.privacyAllowMessages || 'anyone'
+  );
+  const [isUpdatingPrivacy, setIsUpdatingPrivacy] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const themeOptions: { label: string; value: ThemePreference }[] = [
     { label: 'Light', value: 'light' },
     { label: 'Dark', value: 'dark' },
     { label: 'System', value: 'system' },
   ];
+
+  const fetchSessions = useCallback(async () => {
+    setIsLoadingSessions(true);
+    try {
+      const res = await apiGetSessions();
+      setSessions(res.sessions);
+    } catch (err) {
+      console.error('Failed to load sessions', err);
+    } finally {
+      setIsLoadingSessions(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchSessions();
+  }, [fetchSessions]);
 
   const handleToggleNotifications = async () => {
     const next = !notificationsEnabled;
@@ -33,24 +75,66 @@ export function SettingsPage() {
   const handleInstallClick = async () => {
     if (canInstall) {
       await promptInstall();
-    } else {
-      setShowInstallAlert(true);
     }
   };
 
-  const demoAccounts = [
-    { username: 'alex', name: 'Alex Mercer', initials: 'AM', tint: 'tint-1' },
-    { username: 'maya', name: 'Maya Lin', initials: 'ML', tint: 'tint-2' },
-    { username: 'julian', name: 'Julian Vance', initials: 'JV', tint: 'tint-3' },
-    { username: 'amara', name: 'Amara Rao', initials: 'AR', tint: 'tint-4' },
-  ];
+  const handlePrivacyToggle = async (mode: 'anyone' | 'contacts_only') => {
+    if (mode === privacyMode || isUpdatingPrivacy) return;
+    setIsUpdatingPrivacy(true);
+    try {
+      await apiUpdatePrivacy(mode);
+      setPrivacyMode(mode);
+      await refreshProfile();
+    } catch (err) {
+      console.error('Failed to update privacy setting', err);
+    } finally {
+      setIsUpdatingPrivacy(false);
+    }
+  };
+
+  const handleRevokeSession = async (sessionId: string) => {
+    try {
+      await apiRevokeSession(sessionId);
+      setSessions((prev) => prev.filter((s) => s.id !== sessionId));
+    } catch (err) {
+      console.error('Failed to revoke session', err);
+    }
+  };
+
+  const handleLogoutOtherDevices = async () => {
+    if (!window.confirm('Log out of all other active browser sessions?')) return;
+    try {
+      await apiLogoutOtherSessions();
+      await fetchSessions();
+    } catch (err) {
+      console.error('Failed to log out other sessions', err);
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    const prompt = window.prompt(
+      'Are you sure you want to permanently delete your account? This will erase all conversations, cryptographic keys, and sessions.\n\nType your @username to confirm:'
+    );
+    if (!prompt || prompt.toLowerCase().trim() !== user?.username?.toLowerCase().trim()) {
+      return;
+    }
+
+    setIsDeleting(true);
+    try {
+      await apiDeleteAccount();
+      navigate('/login');
+    } catch (err: any) {
+      alert(err.message || 'Failed to delete account');
+      setIsDeleting(false);
+    }
+  };
 
   const userInitials = user?.displayName
     ? user.displayName.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase()
-    : 'AM';
+    : 'U';
 
   return (
-    <div className="flex flex-col min-h-full pb-20" style={{ backgroundColor: 'var(--bg)', color: 'var(--ink)' }}>
+    <div className="flex flex-col min-h-full pb-20 select-none" style={{ backgroundColor: 'var(--bg)', color: 'var(--ink)' }}>
       {/* Top Header */}
       <header className="px-5 pt-4 pb-2 pt-safe">
         <h1
@@ -101,8 +185,7 @@ export function SettingsPage() {
 
       {/* Current Logged-in User Profile Row */}
       <div
-        className="my-3 cursor-pointer"
-        onClick={() => navigate('/profile/me')}
+        className="my-2"
         style={{
           borderTop: '1px solid var(--line)',
           borderBottom: '1px solid var(--line)',
@@ -113,14 +196,14 @@ export function SettingsPage() {
             <div
               className="flex items-center justify-center shrink-0"
               style={{
-                width: '42px',
-                height: '42px',
+                width: '44px',
+                height: '44px',
                 borderRadius: 'var(--radius-full)',
-                backgroundColor: 'var(--tint-1)',
-                color: 'var(--ink)',
+                backgroundColor: `var(--tint-${((user?.avatarTint || 0) % 4) + 1}, #D9CDB8)`,
+                color: '#1D1B18',
                 fontFamily: 'var(--font-serif)',
-                fontSize: '15px',
-                fontWeight: 500,
+                fontSize: '16px',
+                fontWeight: 600,
               }}
             >
               {userInitials}
@@ -134,63 +217,175 @@ export function SettingsPage() {
                   color: 'var(--ink)',
                 }}
               >
-                {user?.displayName || 'Alex Mercer'}
+                {user?.displayName || 'User'}
               </div>
-              <div className="tnum" style={{ fontSize: '12px', color: 'var(--muted)' }}>
-                {user?.phoneNumber || '@' + (user?.username || 'alex')}
+              <div className="font-mono text-xs" style={{ color: 'var(--muted)' }}>
+                @{user?.username || 'handle'}
               </div>
+              {user?.email && (
+                <div className="text-[11px] mt-0.5" style={{ color: 'var(--muted)' }}>
+                  {user.email} <span className="opacity-75">(Recovery email, private)</span>
+                </div>
+              )}
             </div>
           </div>
-          <ChevronRight size={18} style={{ color: 'var(--muted)' }} />
         </div>
       </div>
 
-      {/* Multi-User Switcher for Real-Time Testing */}
-      <div className="px-5 my-2">
-        <div className="flex items-center gap-2 mb-2 text-xs" style={{ color: 'var(--muted)' }}>
-          <Users size={14} />
-          <span className="font-medium">Active Account (Tap to switch &amp; test real-time chat)</span>
+      {/* Privacy Settings Section */}
+      <div className="px-5 mt-4 mb-2">
+        <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--muted)' }}>
+          Privacy &amp; Safety
+        </span>
+      </div>
+
+      <div
+        className="mb-4"
+        style={{
+          borderTop: '1px solid var(--line)',
+          borderBottom: '1px solid var(--line)',
+        }}
+      >
+        <div className="px-5 py-3 flex flex-col gap-2.5">
+          <span className="text-xs font-medium" style={{ color: 'var(--ink)' }}>
+            Who can message me
+          </span>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              disabled={isUpdatingPrivacy}
+              onClick={() => handlePrivacyToggle('anyone')}
+              className="flex-1 p-2.5 rounded-xl border text-left cursor-pointer transition-all flex items-start gap-2"
+              style={{
+                backgroundColor: privacyMode === 'anyone' ? 'var(--surface-2)' : 'var(--surface-1)',
+                borderColor: privacyMode === 'anyone' ? 'var(--accent)' : 'var(--line)',
+              }}
+            >
+              <div className="mt-0.5">
+                {privacyMode === 'anyone' ? (
+                  <Check size={14} style={{ color: 'var(--accent)' }} />
+                ) : (
+                  <div className="w-3.5 h-3.5 rounded-full border border-gray-400" />
+                )}
+              </div>
+              <div>
+                <p className="text-xs font-semibold" style={{ color: 'var(--ink)' }}>
+                  Anyone
+                </p>
+                <p className="text-[11px]" style={{ color: 'var(--muted)' }}>
+                  Strangers land in Requests
+                </p>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              disabled={isUpdatingPrivacy}
+              onClick={() => handlePrivacyToggle('contacts_only')}
+              className="flex-1 p-2.5 rounded-xl border text-left cursor-pointer transition-all flex items-start gap-2"
+              style={{
+                backgroundColor: privacyMode === 'contacts_only' ? 'var(--surface-2)' : 'var(--surface-1)',
+                borderColor: privacyMode === 'contacts_only' ? 'var(--accent)' : 'var(--line)',
+              }}
+            >
+              <div className="mt-0.5">
+                {privacyMode === 'contacts_only' ? (
+                  <Check size={14} style={{ color: 'var(--accent)' }} />
+                ) : (
+                  <div className="w-3.5 h-3.5 rounded-full border border-gray-400" />
+                )}
+              </div>
+              <div>
+                <p className="text-xs font-semibold" style={{ color: 'var(--ink)' }}>
+                  Contacts Only
+                </p>
+                <p className="text-[11px]" style={{ color: 'var(--muted)' }}>
+                  Only people I accepted/invited
+                </p>
+              </div>
+            </button>
+          </div>
         </div>
-        <div className="grid grid-cols-2 gap-2">
-          {demoAccounts.map((acc) => {
-            const isCurrent = user?.username === acc.username;
-            return (
-              <button
-                key={acc.username}
-                type="button"
-                onClick={() => switchUser(acc.username)}
-                className="flex items-center gap-2.5 p-2 rounded-xl text-left cursor-pointer transition-all border"
-                style={{
-                  backgroundColor: isCurrent ? 'var(--surface-2)' : 'var(--surface-1)',
-                  borderColor: isCurrent ? 'var(--accent)' : 'var(--line)',
-                }}
-              >
-                <div
-                  className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-serif font-medium shrink-0"
-                  style={{
-                    backgroundColor: `var(--${acc.tint})`,
-                    color: 'var(--ink)',
-                  }}
+      </div>
+
+      {/* Active Sessions Management */}
+      <div className="px-5 mt-2 mb-2 flex items-center justify-between">
+        <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--muted)' }}>
+          Active Sessions ({sessions.length})
+        </span>
+        {sessions.length > 1 && (
+          <button
+            type="button"
+            onClick={handleLogoutOtherDevices}
+            className="text-xs font-medium cursor-pointer hover:underline"
+            style={{ color: 'var(--accent)' }}
+          >
+            Log out other devices
+          </button>
+        )}
+      </div>
+
+      <div
+        className="mb-4"
+        style={{
+          borderTop: '1px solid var(--line)',
+          borderBottom: '1px solid var(--line)',
+        }}
+      >
+        {isLoadingSessions ? (
+          <div className="p-4 text-xs text-center" style={{ color: 'var(--muted)' }}>
+            Loading sessions...
+          </div>
+        ) : sessions.length === 0 ? (
+          <div className="p-4 text-xs text-center" style={{ color: 'var(--muted)' }}>
+            No other active sessions.
+          </div>
+        ) : (
+          sessions.map((s) => (
+            <div
+              key={s.id}
+              className="flex items-center justify-between px-5 py-3 border-b last:border-b-0"
+              style={{ borderColor: 'var(--line)' }}
+            >
+              <div className="flex items-center gap-3">
+                <Smartphone size={18} style={{ color: s.isCurrent ? 'var(--accent)' : 'var(--muted)' }} />
+                <div>
+                  <div className="text-xs font-medium flex items-center gap-1.5" style={{ color: 'var(--ink)' }}>
+                    <span>{s.deviceName || 'Web Browser'}</span>
+                    {s.isCurrent && (
+                      <span
+                        className="px-1.5 py-0.2 rounded text-[10px] font-semibold"
+                        style={{ backgroundColor: 'var(--surface-2)', color: 'var(--accent)' }}
+                      >
+                        Current Device
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-[11px]" style={{ color: 'var(--muted)' }}>
+                    {s.ipAddress || 'Unknown IP'} • Active {new Date(s.lastUsedAt).toLocaleDateString()}
+                  </div>
+                </div>
+              </div>
+
+              {!s.isCurrent && (
+                <button
+                  type="button"
+                  onClick={() => handleRevokeSession(s.id)}
+                  className="text-xs p-1.5 rounded-lg cursor-pointer hover:bg-black/5"
+                  style={{ color: 'var(--heart)' }}
+                  title="Revoke session"
                 >
-                  {acc.initials}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="text-xs font-medium truncate" style={{ color: 'var(--ink)' }}>
-                    {acc.name}
-                  </div>
-                  <div className="text-[10px] truncate" style={{ color: isCurrent ? 'var(--accent)' : 'var(--muted)' }}>
-                    {isCurrent ? 'Active Now' : '@' + acc.username}
-                  </div>
-                </div>
-              </button>
-            );
-          })}
-        </div>
+                  Revoke
+                </button>
+              )}
+            </div>
+          ))
+        )}
       </div>
 
       {/* Preferences Group */}
       <div
-        className="my-3"
+        className="my-2"
         style={{
           borderTop: '1px solid var(--line)',
           borderBottom: '1px solid var(--line)',
@@ -224,7 +419,7 @@ export function SettingsPage() {
           </button>
         </div>
 
-        {/* Add to Home Screen (PWA Install) */}
+        {/* PWA Install */}
         <div
           onClick={handleInstallClick}
           className="flex items-center justify-between px-5 py-3.5 cursor-pointer hover:bg-[var(--surface-2)] transition-colors"
@@ -243,123 +438,48 @@ export function SettingsPage() {
           </div>
           <ChevronRight size={18} style={{ color: 'var(--muted)' }} />
         </div>
-
-        {/* Storage and Data */}
-        <div className="flex items-center justify-between px-5 py-3.5">
-          <div className="flex items-center gap-3">
-            <HardDrive size={18} style={{ color: 'var(--muted)' }} />
-            <div>
-              <div style={{ fontSize: '15px', color: 'var(--ink)' }}>Storage and data</div>
-              <div className="tnum" style={{ fontSize: '12px', color: 'var(--muted)' }}>
-                12.4 MB · IndexedDB offline storage
-              </div>
-            </div>
-          </div>
-          <button
-            type="button"
-            className="text-xs cursor-pointer hover:underline"
-            style={{ color: 'var(--muted)' }}
-          >
-            Clear
-          </button>
-        </div>
       </div>
 
-      {/* Security Group */}
+      {/* Account Actions */}
       <div
-        className="my-3 cursor-pointer hover:bg-[var(--surface-2)] transition-colors"
-        onClick={() => navigate('/security/user_maya')}
+        className="my-3"
         style={{
           borderTop: '1px solid var(--line)',
           borderBottom: '1px solid var(--line)',
         }}
       >
-        <div className="flex items-center justify-between px-5 py-3.5">
+        {/* Log Out */}
+        <div
+          onClick={logout}
+          className="flex items-center justify-between px-5 py-3.5 cursor-pointer hover:bg-[var(--surface-2)] transition-colors"
+          style={{ borderBottom: '1px solid var(--line)' }}
+        >
           <div className="flex items-center gap-3">
-            <Shield size={18} style={{ color: 'var(--accent)' }} />
-            <div>
-              <div style={{ fontSize: '15px', color: 'var(--ink)' }}>Security details</div>
-              <div style={{ fontSize: '12px', color: 'var(--muted)' }}>Device keys &amp; verification</div>
-            </div>
+            <LogOut size={18} style={{ color: 'var(--muted)' }} />
+            <span style={{ fontSize: '15px', color: 'var(--ink)' }}>Log Out</span>
           </div>
           <ChevronRight size={18} style={{ color: 'var(--muted)' }} />
         </div>
-      </div>
 
-      {/* Logout Row */}
-      <div
-        className="my-1 cursor-pointer"
-        onClick={logout}
-        style={{
-          borderTop: '1px solid var(--line)',
-          borderBottom: '1px solid var(--line)',
-        }}
-      >
-        <div className="flex items-center justify-between px-5 py-3.5">
-          <div className="flex items-center gap-3">
-            <LogOut size={18} style={{ color: 'var(--heart)' }} />
-            <div style={{ fontSize: '15px', color: 'var(--heart)' }}>Log out</div>
-          </div>
-        </div>
-      </div>
-
-      {/* iOS / Install Instructions Modal */}
-      {showInstallAlert && (
+        {/* Delete Account */}
         <div
-          role="dialog"
-          aria-modal="true"
-          className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/40 backdrop-blur-xs"
-          onClick={() => setShowInstallAlert(false)}
+          onClick={handleDeleteAccount}
+          className="flex items-center justify-between px-5 py-3.5 cursor-pointer hover:bg-red-500/5 transition-colors"
         >
-          <div
-            className="w-full max-w-sm p-6 rounded-2xl select-none"
-            style={{
-              backgroundColor: 'var(--surface-1)',
-              border: '1px solid var(--line)',
-              boxShadow: '0 10px 25px rgba(0, 0, 0, 0.15)',
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3
-              style={{
-                fontFamily: 'var(--font-serif)',
-                fontSize: '20px',
-                fontWeight: 500,
-                color: 'var(--ink)',
-                marginBottom: '8px',
-              }}
-            >
-              {isInstalled ? 'Already Installed' : isIOS ? 'Install on iOS Safari' : 'Install WhatsUS'}
-            </h3>
-            <p
-              style={{
-                fontSize: '14px',
-                lineHeight: 1.5,
-                color: 'var(--muted)',
-                marginBottom: '20px',
-              }}
-            >
-              {isInstalled
-                ? 'This app is already installed on your device home screen.'
-                : isIOS
-                ? 'Tap the Share icon in Safari’s navigation bar, scroll down and tap "Add to Home Screen".'
-                : 'To install on Android or Chrome desktop, click the Install icon in the browser address bar or menu.'}
-            </p>
-            <button
-              type="button"
-              onClick={() => setShowInstallAlert(false)}
-              className="w-full py-2.5 rounded-xl font-medium cursor-pointer transition-transform active:scale-[0.98]"
-              style={{
-                backgroundColor: 'var(--accent)',
-                color: 'var(--accent-ink)',
-                fontSize: '14px',
-              }}
-            >
-              Got it
-            </button>
+          <div className="flex items-center gap-3">
+            <Trash2 size={18} style={{ color: 'var(--heart)' }} />
+            <div>
+              <span style={{ fontSize: '15px', color: 'var(--heart)' }}>
+                {isDeleting ? 'Erasing Account...' : 'Delete Account'}
+              </span>
+              <p className="text-[11px]" style={{ color: 'var(--muted)' }}>
+                Wipes all messages, sessions, and reserves handle for 30 days
+              </p>
+            </div>
           </div>
+          <AlertTriangle size={16} style={{ color: 'var(--heart)' }} />
         </div>
-      )}
+      </div>
     </div>
   );
 }

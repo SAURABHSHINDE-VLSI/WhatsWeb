@@ -1,7 +1,8 @@
+import React from 'react';
 import { BrowserRouter, Routes, Route, Outlet, useLocation, useNavigate, Navigate } from 'react-router-dom';
-import { MessageSquare, Phone, Settings as SettingsIcon } from 'lucide-react';
+import { MessageSquare, Phone, Settings as SettingsIcon, Feather } from 'lucide-react';
 import { ThemeProvider } from './contexts/ThemeContext';
-import { AuthProvider } from './contexts/AuthContext';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ChatProvider } from './contexts/ChatContext';
 import { CallProvider } from './contexts/CallContext';
 import { CallModal } from './components/CallModal';
@@ -10,6 +11,10 @@ import ConversationPage from './pages/ConversationPage';
 import ProfilePage from './pages/ProfilePage';
 import SettingsPage from './pages/SettingsPage';
 import OnboardingPage from './pages/OnboardingPage';
+import LoginPage from './pages/LoginPage';
+import ConnectPage from './pages/ConnectPage';
+import RequestsPage from './pages/RequestsPage';
+import InvitePage from './pages/InvitePage';
 import CallsPage from './pages/CallsPage';
 import StatesScreen from './screens/StatesScreen';
 import SecurityDetailsScreen from './screens/SecurityDetailsScreen';
@@ -26,10 +31,6 @@ const NAV_TABS: NavTabItem[] = [
   { label: 'Settings', path: '/settings', icon: SettingsIcon },
 ];
 
-/**
- * Main application layout featuring the 3-tab bottom navigation
- * (Chats, Calls, Settings) using Lucide icons.
- */
 export function Layout() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -94,14 +95,39 @@ export function Layout() {
   );
 }
 
-/**
- * Root App component configured with ThemeProvider and React Router routes:
- * - / (ChatList)
- * - /chat/:id (Conversation)
- * - /profile/:id (Profile)
- * - /settings (Settings)
- * - /onboarding (Onboarding)
- */
+function ProtectedRoute() {
+  const { user, isLoading } = useAuth();
+
+  if (isLoading) {
+    return (
+      <div
+        className="flex flex-col items-center justify-center h-dvh w-full select-none"
+        style={{ backgroundColor: 'var(--bg)', color: 'var(--ink)' }}
+      >
+        <div
+          className="w-16 h-16 rounded-2xl flex items-center justify-center mb-4 shadow-sm animate-pulse"
+          style={{ backgroundColor: 'var(--surface-1)', color: 'var(--accent)' }}
+        >
+          <Feather size={32} />
+        </div>
+        <p className="text-xs font-serif" style={{ color: 'var(--muted)' }}>
+          WhatsUS • Decrypting session...
+        </p>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <Navigate to="/login" replace />;
+  }
+
+  if (!user.isOnboarded) {
+    return <Navigate to="/onboarding" replace />;
+  }
+
+  return <Outlet />;
+}
+
 export default function App() {
   return (
     <ThemeProvider>
@@ -111,19 +137,28 @@ export default function App() {
             <BrowserRouter>
               <CallModal />
               <Routes>
-                {/* Main Tabbed Screens wrapped with 3-tab Layout */}
-                <Route element={<Layout />}>
-                  <Route path="/" element={<ChatListPage />} />
-                  <Route path="/calls" element={<CallsPage />} />
-                  <Route path="/settings" element={<SettingsPage />} />
-                </Route>
-
-                {/* Full Screen Screens (without bottom tab bar) */}
-                <Route path="/chat/:id" element={<ConversationPage />} />
-                <Route path="/profile/:id" element={<ProfilePage />} />
-                <Route path="/security/:id" element={<SecurityDetailsScreen />} />
+                {/* Public Auth Routes */}
+                <Route path="/login" element={<LoginPage />} />
+                <Route path="/invite/:code" element={<InvitePage />} />
                 <Route path="/onboarding" element={<OnboardingPage />} />
-                <Route path="/states" element={<StatesScreen />} />
+
+                {/* Protected Routes */}
+                <Route element={<ProtectedRoute />}>
+                  {/* Tabbed Layout */}
+                  <Route element={<Layout />}>
+                    <Route path="/" element={<ChatListPage />} />
+                    <Route path="/calls" element={<CallsPage />} />
+                    <Route path="/settings" element={<SettingsPage />} />
+                  </Route>
+
+                  {/* Full Screen Screens */}
+                  <Route path="/new-chat" element={<ConnectPage />} />
+                  <Route path="/requests" element={<RequestsPage />} />
+                  <Route path="/chat/:id" element={<ConversationPage />} />
+                  <Route path="/profile/:id" element={<ProfilePage />} />
+                  <Route path="/security/:id" element={<SecurityDetailsScreen />} />
+                  <Route path="/states" element={<StatesScreen />} />
+                </Route>
 
                 {/* Fallback route */}
                 <Route path="*" element={<Navigate to="/" replace />} />

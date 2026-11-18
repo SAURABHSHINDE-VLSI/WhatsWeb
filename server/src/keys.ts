@@ -63,10 +63,26 @@ export async function keyRoutes(app: FastifyInstance) {
 
   // Fetch pre-key bundle for a contact to initiate X3DH session
   app.get('/api/keys/bundle/:userId', { preHandler: [authenticate] }, async (req, reply) => {
-    const { userId } = req.params as { userId: string };
+    const payload = req.user as TokenPayload;
+    const currentUserId = payload.userId;
+    const { userId: targetUserId } = req.params as { userId: string };
+
+    // Blocking check: If either user has blocked the other, refuse key bundle fetch!
+    const block = await prisma.blockedUser.findFirst({
+      where: {
+        OR: [
+          { blockerId: currentUserId, blockedId: targetUserId },
+          { blockerId: targetUserId, blockedId: currentUserId },
+        ],
+      },
+    });
+
+    if (block) {
+      return reply.status(404).send({ error: 'Pre-key bundle not found for user' });
+    }
 
     const bundle = await prisma.preKeyBundle.findUnique({
-      where: { userId },
+      where: { userId: targetUserId },
       include: {
         oneTimePreKeys: {
           where: { consumed: false },

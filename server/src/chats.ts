@@ -1,46 +1,66 @@
 import { FastifyInstance } from 'fastify';
 import { prisma } from './db.js';
-import { TokenPayload, authenticate } from './auth.js';
+import { TokenPayload, authenticate, serializeSafeUser } from './auth.js';
 
 export async function chatRoutes(app: FastifyInstance) {
-  // List users
-  app.get('/api/users', { preHandler: [authenticate] }, async (req, reply) => {
-    const payload = req.user as TokenPayload;
-    const users = await prisma.user.findMany({
-      where: {
-        id: { not: payload.userId },
-      },
-      select: {
-        id: true,
-        username: true,
-        displayName: true,
-        phoneNumber: true,
-        avatarTint: true,
-      },
-    });
-
-    return reply.send({ users });
-  });
-
-  // List recent chats with partner info, last message, and unread count
+  // List chats: ONLY partners with mutual contact or existing exchanged messages.
+  // Never list all users in the system!
   app.get('/api/chats', { preHandler: [authenticate] }, async (req, reply) => {
     const payload = req.user as TokenPayload;
     const currentUserId = payload.userId;
 
-    // Find all users the current user has exchanged messages with, or all available demo users
-    const allOtherUsers = await prisma.user.findMany({
-      where: { id: { not: currentUserId } },
-      select: {
-        id: true,
-        username: true,
-        displayName: true,
-        phoneNumber: true,
-        avatarTint: true,
+    // Find all contact records for current user
+    const contacts = await prisma.contact.findMany({
+      where: { userId: currentUserId },
+      select: { contactId: true, isPinned: true, isMuted: true },
+    });
+
+    const contactMap = new Map(contacts.map((c) => [c.contactId, c]));
+
+    // Find all user IDs with exchanged messages
+    const sentMessages = await prisma.message.findMany({
+      where: { senderId: currentUserId },
+      select: { receiverId: true },
+      distinct: ['receiverId'],
+    });
+
+    const receivedMessages = await prisma.message.findMany({
+      where: { receiverId: currentUserId },
+      select: { senderId: true },
+      distinct: ['senderId'],
+    });
+
+    const partnerIdsSet = new Set<string>();
+    for (const c of contacts) partnerIdsSet.add(c.contactId);
+    for (const m of sentMessages) partnerIdsSet.add(m.receiverId);
+    for (const m of receivedMessages) partnerIdsSet.add(m.senderId);
+
+    // Filter out blocked users (in either direction)
+    const blocks = await prisma.blockedUser.findMany({
+      where: {
+        OR: [
+          { blockerId: currentUserId },
+          { blockedId: currentUserId },
+        ],
       },
     });
 
+    for (const b of blocks) {
+      partnerIdsSet.delete(b.blockerId === currentUserId ? b.blockedId : b.blockerId);
+    }
+
+    const partnerIds = Array.from(partnerIdsSet);
+
+    if (partnerIds.length === 0) {
+      return reply.send({ chats: [] });
+    }
+
+    const partners = await prisma.user.findMany({
+      where: { id: { in: partnerIds } },
+    });
+
     const chatSummaries = await Promise.all(
-      allOtherUsers.map(async (partner) => {
+      partners.map(async (partner) => {
         // Last message
         const lastMessage = await prisma.message.findFirst({
           where: {
@@ -61,20 +81,13 @@ export async function chatRoutes(app: FastifyInstance) {
           },
         });
 
-        const contact = await prisma.contact.findUnique({
-          where: {
-            userId_contactId: {
-              userId: currentUserId,
-              contactId: partner.id,
-            },
-          },
-        });
+        const contact = contactMap.get(partner.id);
 
         return {
           id: partner.id,
-          name: partner.displayName,
+          name: partner.displayName || partner.username || 'Contact',
           username: partner.username,
-          phoneNumber: partner.phoneNumber,
+          avatarUrl: partner.avatarUrl,
           tint: partner.avatarTint,
           lastMessage: lastMessage
             ? {
@@ -93,7 +106,7 @@ export async function chatRoutes(app: FastifyInstance) {
       })
     );
 
-    // Sort by lastMessage createdAt desc, then pinned
+    // Sort by pinned first, then lastMessage createdAt descending
     chatSummaries.sort((a, b) => {
       if (a.isPinned !== b.isPinned) return a.isPinned ? -1 : 1;
       const aTime = a.lastMessage ? new Date(a.lastMessage.createdAt).getTime() : 0;
@@ -109,6 +122,20 @@ export async function chatRoutes(app: FastifyInstance) {
     const payload = req.user as TokenPayload;
     const currentUserId = payload.userId;
     const { partnerId } = req.params as { partnerId: string };
+
+    // Check if blocked
+    const block = await prisma.blockedUser.findFirst({
+      where: {
+        OR: [
+          { blockerId: currentUserId, blockedId: partnerId },
+          { blockerId: partnerId, blockedId: currentUserId },
+        ],
+      },
+    });
+
+    if (block) {
+      return reply.status(403).send({ error: 'Cannot view messages with this user' });
+    }
 
     const messages = await prisma.message.findMany({
       where: {
@@ -129,6 +156,9 @@ export async function chatRoutes(app: FastifyInstance) {
         receiverId: m.receiverId,
         isSent: m.senderId === currentUserId,
         content: m.content,
+        nonce: m.nonce,
+        ephemeralKey: m.ephemeralKey,
+        recipientPreKeyId: m.recipientPreKeyId,
         type: m.type,
         mediaUrl: m.mediaUrl,
         status: m.status,

@@ -31,6 +31,18 @@ export function isUserOnline(userId: string): boolean {
   return Boolean(sockets && sockets.size > 0);
 }
 
+async function areUsersBlocked(userA: string, userB: string): Promise<boolean> {
+  const block = await prisma.blockedUser.findFirst({
+    where: {
+      OR: [
+        { blockerId: userA, blockedId: userB },
+        { blockerId: userB, blockedId: userA },
+      ],
+    },
+  });
+  return Boolean(block);
+}
+
 export async function websocketRoutes(app: FastifyInstance) {
   app.get('/ws', { websocket: true }, (socket, req) => {
     let authenticatedUserId: string | null = null;
@@ -81,7 +93,7 @@ export async function websocketRoutes(app: FastifyInstance) {
             clientMessageId,
             receiverId,
             ciphertext,
-            content, // backward-compat or fallback
+            content,
             nonce,
             ephemeralKey,
             recipientPreKeyId,
@@ -98,7 +110,54 @@ export async function websocketRoutes(app: FastifyInstance) {
             return;
           }
 
-          // Deduplication
+          // Check if users are blocked
+          if (await areUsersBlocked(currentUserId, receiverId)) {
+            sendJson(socket, { event: 'error', message: 'Message cannot be delivered to this user' });
+            return;
+          }
+
+          // Check recipient privacy setting & requests
+          const receiver = await prisma.user.findUnique({
+            where: { id: receiverId },
+            include: {
+              contacts: { where: { contactId: currentUserId } },
+            },
+          });
+
+          if (!receiver) {
+            sendJson(socket, { event: 'error', message: 'Recipient not found' });
+            return;
+          }
+
+          const isEstablishedContact = receiver.contacts.length > 0;
+
+          if (!isEstablishedContact) {
+            if (receiver.privacyAllowMessages === 'contacts_only') {
+              sendJson(socket, {
+                event: 'error',
+                message: 'This user only receives messages from accepted contacts',
+              });
+              return;
+            }
+
+            // Stranger contact: Ensure a pending ContactRequest exists so it appears in Requests inbox
+            await prisma.contactRequest.upsert({
+              where: {
+                senderId_receiverId: {
+                  senderId: currentUserId,
+                  receiverId,
+                },
+              },
+              create: {
+                senderId: currentUserId,
+                receiverId,
+                status: 'pending',
+              },
+              update: {},
+            });
+          }
+
+          // Deduplication by clientMessageId
           if (clientMessageId) {
             const existing = await prisma.message.findUnique({
               where: { clientMessageId },
@@ -169,10 +228,6 @@ export async function websocketRoutes(app: FastifyInstance) {
             });
           } else {
             // Recipient is offline: send generic trigger Web Push notification (ZERO plaintext)
-            const sender = await prisma.user.findUnique({
-              where: { id: currentUserId },
-              select: { displayName: true },
-            });
             sendZeroPlaintextPush(receiverId).catch(() => {});
           }
           return;
@@ -182,6 +237,8 @@ export async function websocketRoutes(app: FastifyInstance) {
         if (event === 'message:read') {
           const { partnerId, messageIds } = data;
           if (!partnerId) return;
+
+          if (await areUsersBlocked(currentUserId, partnerId)) return;
 
           const now = new Date();
           let updatedIds: string[] = [];
@@ -238,6 +295,7 @@ export async function websocketRoutes(app: FastifyInstance) {
         if (event === 'typing') {
           const { receiverId, isTyping } = data;
           if (receiverId) {
+            if (await areUsersBlocked(currentUserId, receiverId)) return;
             broadcastToUser(receiverId, {
               event: 'typing',
               senderId: currentUserId,
@@ -251,6 +309,15 @@ export async function websocketRoutes(app: FastifyInstance) {
         if (event === 'call:initiate') {
           const { receiverId, callerName, callerAvatarTint, callType, offer } = data;
           if (!receiverId) return;
+
+          if (await areUsersBlocked(currentUserId, receiverId)) {
+            sendJson(socket, {
+              event: 'call:user_offline',
+              receiverId,
+            });
+            return;
+          }
+
           if (isUserOnline(receiverId)) {
             broadcastToUser(receiverId, {
               event: 'call:incoming',
@@ -272,6 +339,7 @@ export async function websocketRoutes(app: FastifyInstance) {
         if (event === 'call:accept') {
           const { callerId, answer } = data;
           if (callerId) {
+            if (await areUsersBlocked(currentUserId, callerId)) return;
             broadcastToUser(callerId, {
               event: 'call:accepted',
               receiverId: currentUserId,
@@ -296,6 +364,7 @@ export async function websocketRoutes(app: FastifyInstance) {
         if (event === 'call:ice_candidate') {
           const { targetUserId, candidate } = data;
           if (targetUserId && candidate) {
+            if (await areUsersBlocked(currentUserId, targetUserId)) return;
             broadcastToUser(targetUserId, {
               event: 'call:ice_candidate',
               senderId: currentUserId,
@@ -359,7 +428,18 @@ function unregisterUserSocket(socket: WebSocket, userId: string) {
   console.log(`[WS] Disconnected: ${userId}`);
 }
 
-function broadcastPresence(userId: string, isOnline: boolean) {
+async function broadcastPresence(userId: string, isOnline: boolean) {
+  // Find all users who have blocked or are blocked by this user to exclude them
+  const blocks = await prisma.blockedUser.findMany({
+    where: {
+      OR: [{ blockerId: userId }, { blockedId: userId }],
+    },
+  });
+  const excludedIds = new Set<string>();
+  for (const b of blocks) {
+    excludedIds.add(b.blockerId === userId ? b.blockedId : b.blockerId);
+  }
+
   const presenceEvent = {
     event: 'presence',
     userId,
@@ -367,7 +447,8 @@ function broadcastPresence(userId: string, isOnline: boolean) {
     lastSeen: new Date().toISOString(),
   };
 
-  for (const socketSet of userSockets.values()) {
+  for (const [targetUserId, socketSet] of userSockets.entries()) {
+    if (targetUserId === userId || excludedIds.has(targetUserId)) continue;
     for (const ws of socketSet) {
       sendJson(ws, presenceEvent);
     }

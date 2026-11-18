@@ -26,7 +26,7 @@ export interface LocalChat {
   id: string; // partnerId
   name: string;
   username: string;
-  phoneNumber?: string;
+  avatarUrl?: string | null;
   tint: number;
   snippet: string;
   lastMessageTime: string;
@@ -34,6 +34,8 @@ export interface LocalChat {
   isPinned: boolean;
   isMuted: boolean;
   isOnline?: boolean;
+  hasVoice?: boolean;
+  hasPhoto?: boolean;
 }
 
 export interface OutboxItem {

@@ -12,6 +12,7 @@ Thumbs.db
 *.db-shm
 *.enc
 *.zip
+*.tsbuildinfo
 server/uploads/*
 !server/uploads/.gitkeep
 

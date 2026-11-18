@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { authRoutes } from './auth.js';
 import { chatRoutes } from './chats.js';
+import { contactRoutes } from './contacts.js';
 import { websocketRoutes } from './ws.js';
 import { keyRoutes } from './keys.js';
 import { pushRoutes } from './push.js';
@@ -110,14 +111,20 @@ await app.register(websocket, {
   },
 });
 
-// Health check
+// Health check and public configuration
 app.get('/api/health', async () => {
-  return { status: 'ok', service: 'editorial-messenger-api', timestamp: new Date().toISOString() };
+  return {
+    status: 'ok',
+    service: 'editorial-messenger-api',
+    googleClientId: process.env.GOOGLE_CLIENT_ID || null,
+    timestamp: new Date().toISOString(),
+  };
 });
 
 // App routes
 await app.register(authRoutes);
 await app.register(chatRoutes);
+await app.register(contactRoutes);
 await app.register(websocketRoutes);
 await app.register(keyRoutes);
 await app.register(pushRoutes);

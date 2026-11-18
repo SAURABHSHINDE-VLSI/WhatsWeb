@@ -1,21 +1,22 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
-import { apiGetMe, apiLogin, apiRegister, apiLogout, setAccessToken, getAccessToken } from '../lib/api';
+import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import {
+  User,
+  apiGetMe,
+  apiGoogleSignIn,
+  apiOnboarding,
+  apiLogout,
+  tryRefreshToken,
+  getAccessToken,
+  setAccessToken,
+} from '../lib/api';
 import { wsClient } from '../lib/wsClient';
-
-export interface User {
-  id: string;
-  username: string;
-  displayName: string;
-  phoneNumber?: string;
-  avatarTint: number;
-}
 
 interface AuthContextValue {
   user: User | null;
   isLoading: boolean;
-  login: (username: string, password?: string) => Promise<void>;
-  register: (payload: { username: string; password?: string; displayName: string; phoneNumber?: string; avatarTint?: number }) => Promise<void>;
-  switchUser: (username: string) => Promise<void>;
+  googleSignIn: (idToken: string, nonce: string) => Promise<{ isOnboarded: boolean }>;
+  completeOnboarding: (username: string, displayName: string, avatarTint?: number) => Promise<void>;
+  refreshProfile: () => Promise<void>;
   logout: () => Promise<void>;
 }
 
@@ -25,79 +26,75 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Initialize session or auto-login default demo user 'alex'
+  const refreshProfile = useCallback(async () => {
+    try {
+      const res = await apiGetMe();
+      if (res?.user) {
+        setUser(res.user);
+      }
+    } catch (err) {
+      console.warn('[Auth] Failed to refresh profile', err);
+    }
+  }, []);
+
+  // Initialize session on page load: silent refresh from httpOnly cookie
   useEffect(() => {
     let mounted = true;
 
-    async function initAuth() {
+    async function initSession() {
       try {
-        const token = getAccessToken();
-        if (token) {
+        const refreshed = await tryRefreshToken();
+        if (refreshed && mounted) {
           const res = await apiGetMe();
           if (mounted && res?.user) {
             setUser(res.user);
-            wsClient.connect(token);
-            setIsLoading(false);
-            return;
+            const token = getAccessToken();
+            if (token) {
+              wsClient.connect(token);
+            }
           }
         }
       } catch (err) {
-        console.log('[Auth] Token check failed, attempting auto-login as alex...');
-      }
-
-      // Default quick-start login as Alex Mercer
-      try {
-        const data = await apiLogin('alex', 'password123');
-        if (mounted && data?.user) {
-          setUser(data.user);
-          wsClient.connect(data.accessToken);
-        }
-      } catch (err) {
-        console.warn('[Auth] Auto-login failed', err);
+        console.log('[Auth] No active session found');
       } finally {
         if (mounted) setIsLoading(false);
       }
     }
 
-    initAuth();
+    initSession();
 
     return () => {
       mounted = false;
     };
   }, []);
 
-  const login = async (username: string, password = 'password123') => {
+  const googleSignIn = async (idToken: string, nonce: string) => {
     setIsLoading(true);
     try {
-      const data = await apiLogin(username, password);
+      const data = await apiGoogleSignIn({ idToken, nonce });
       setUser(data.user);
       wsClient.disconnect();
-      wsClient.connect(data.accessToken);
+      if (data.accessToken) {
+        wsClient.connect(data.accessToken);
+      }
+      return { isOnboarded: data.isOnboarded };
     } finally {
       setIsLoading(false);
     }
   };
 
-  const register = async (payload: { username: string; password?: string; displayName: string; phoneNumber?: string; avatarTint?: number }) => {
+  const completeOnboarding = async (username: string, displayName: string, avatarTint?: number) => {
     setIsLoading(true);
     try {
-      const data = await apiRegister({
-        username: payload.username,
-        password: payload.password || 'password123',
-        displayName: payload.displayName,
-        phoneNumber: payload.phoneNumber,
-        avatarTint: payload.avatarTint,
-      });
+      const data = await apiOnboarding({ username, displayName, avatarTint });
       setUser(data.user);
       wsClient.disconnect();
-      wsClient.connect(data.accessToken);
+      if (data.accessToken) {
+        wsClient.connect(data.accessToken);
+      }
     } finally {
       setIsLoading(false);
     }
-  };
-
-  const switchUser = async (username: string) => {
-    await login(username, 'password123');
   };
 
   const logout = async () => {
@@ -113,7 +110,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, login, register, switchUser, logout }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        isLoading,
+        googleSignIn,
+        completeOnboarding,
+        refreshProfile,
+        logout,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );

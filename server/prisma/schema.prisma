@@ -8,30 +8,77 @@ datasource db {
 }
 
 model User {
-  id               String         @id @default(cuid())
-  username         String         @unique
-  phoneNumber      String?        @unique
-  displayName      String
-  passwordHash     String
-  avatarTint       Int            @default(0)
-  createdAt        DateTime       @default(now())
-  updatedAt        DateTime       @updatedAt
+  id                      String              @id @default(cuid())
+  username                String?             @unique
+  displayName             String?
+  email                   String?             // Private: for recovery & owner display only. Never exposed in API.
+  avatarUrl               String?
+  avatarTint              Int                 @default(0)
+  usernameChangedAt       DateTime?
+  privacyAllowMessages    String              @default("anyone") // "anyone" | "contacts_only"
+  createdAt               DateTime            @default(now())
+  updatedAt               DateTime            @updatedAt
 
-  sentMessages     Message[]      @relation("SentMessages")
-  receivedMessages Message[]      @relation("ReceivedMessages")
-  sessions         Session[]
-  contacts         Contact[]      @relation("UserContacts")
-  preKeyBundle     PreKeyBundle?
-  pushSubscriptions PushSubscription[]
+  identities              Identity[]
+  sessions                Session[]
+  contacts                Contact[]           @relation("UserContacts")
+  contactRequestsSent     ContactRequest[]    @relation("SentRequests")
+  contactRequestsReceived ContactRequest[]    @relation("ReceivedRequests")
+  blockedUsers            BlockedUser[]       @relation("UserBlocks")
+  blockedBy               BlockedUser[]       @relation("BlockedByUsers")
+  inviteLinks             InviteLink[]
+  sentMessages            Message[]           @relation("SentMessages")
+  receivedMessages        Message[]           @relation("ReceivedMessages")
+  preKeyBundle            PreKeyBundle?
+  pushSubscriptions       PushSubscription[]
+}
+
+model Identity {
+  id             String   @id @default(cuid())
+  provider       String   // e.g. "google"
+  providerUserId String   // Google stable 'sub' claim
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt      DateTime @default(now())
+
+  @@unique([provider, providerUserId])
+  @@index([userId])
+}
+
+model UsernameReservation {
+  id        String   @id @default(cuid())
+  username  String   @unique
+  heldUntil DateTime
+  createdAt DateTime @default(now())
+
+  @@index([heldUntil])
+}
+
+model AuthNonce {
+  id        String   @id @default(cuid())
+  nonce     String   @unique
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([expiresAt])
 }
 
 model Session {
   id               String    @id @default(cuid())
+  familyId         String    @default(cuid())
   userId           String
   user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   refreshTokenHash String    @unique
+  deviceName       String?
+  ipAddress        String?
+  lastUsedAt       DateTime  @default(now())
   expiresAt        DateTime
+  revokedAt        DateTime?
   createdAt        DateTime  @default(now())
+
+  @@index([userId])
+  @@index([familyId])
 }
 
 model PreKeyBundle {
@@ -90,6 +137,56 @@ model Contact {
   createdAt  DateTime @default(now())
 
   @@unique([userId, contactId])
+}
+
+model ContactRequest {
+  id          String   @id @default(cuid())
+  senderId    String
+  sender      User     @relation("SentRequests", fields: [senderId], references: [id], onDelete: Cascade)
+  receiverId  String
+  receiver    User     @relation("ReceivedRequests", fields: [receiverId], references: [id], onDelete: Cascade)
+  status      String   @default("pending") // pending | accepted | ignored | rejected
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([senderId, receiverId])
+  @@index([receiverId, status])
+}
+
+model BlockedUser {
+  id          String   @id @default(cuid())
+  blockerId   String
+  blocker     User     @relation("UserBlocks", fields: [blockerId], references: [id], onDelete: Cascade)
+  blockedId   String
+  blocked     User     @relation("BlockedByUsers", fields: [blockedId], references: [id], onDelete: Cascade)
+  reason      String?
+  createdAt   DateTime @default(now())
+
+  @@unique([blockerId, blockedId])
+  @@index([blockerId])
+  @@index([blockedId])
+}
+
+model UserReport {
+  id          String   @id @default(cuid())
+  reporterId  String
+  reportedId  String
+  reason      String
+  createdAt   DateTime @default(now())
+
+  @@index([reportedId])
+}
+
+model InviteLink {
+  id         String    @id @default(cuid())
+  code       String    @unique
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt  DateTime?
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([userId])
 }
 
 model PushSubscription {
