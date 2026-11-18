@@ -15,4 +15,5 @@ Thumbs.db
 *.tsbuildinfo
 server/uploads/*
 !server/uploads/.gitkeep
+uploads/
 

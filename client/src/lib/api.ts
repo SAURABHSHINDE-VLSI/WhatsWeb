@@ -318,7 +318,10 @@ export async function apiFetchPreKeyBundle(userId: string) {
 }
 
 // 8. Encrypted Media API
-export async function apiUploadEncryptedMedia(blob: Blob): Promise<{ fileId: string; mediaUrl: string }> {
+export async function apiUploadEncryptedMedia(
+  blob: Blob,
+  onProgress?: (pct: number) => void
+): Promise<{ fileId: string; mediaUrl: string }> {
   const formData = new FormData();
   formData.append('file', blob, 'media.enc');
 
@@ -338,7 +341,102 @@ export async function apiUploadEncryptedMedia(blob: Blob): Promise<{ fileId: str
     throw new Error(`Media upload failed with status ${res.status}`);
   }
 
+  if (onProgress) onProgress(100);
   return res.json();
+}
+
+export async function apiUploadEncryptedMediaChunked(
+  fileBytes: Uint8Array,
+  options: {
+    chunkSize?: number;
+    onProgress?: (pct: number) => void;
+    signal?: AbortSignal;
+  } = {}
+): Promise<{ fileId: string; mediaUrl: string }> {
+  const chunkSize = options.chunkSize || 512 * 1024; // 512 KB per chunk
+  const totalSize = fileBytes.length;
+
+  // Single-shot upload if file <= 1MB
+  if (totalSize <= 1024 * 1024) {
+    const blob = new Blob([fileBytes.buffer as ArrayBuffer], { type: 'application/octet-stream' });
+    return apiUploadEncryptedMedia(blob, options.onProgress);
+  }
+
+  const totalChunks = Math.ceil(totalSize / chunkSize);
+
+  // 1. Init upload session
+  const initRes = await apiRequest<{ uploadId: string }>('/api/media/upload/init', {
+    method: 'POST',
+    body: JSON.stringify({ totalChunks, totalSize }),
+    signal: options.signal,
+  });
+  const uploadId = initRes.uploadId;
+
+  // 2. Upload chunks with retry
+  for (let i = 0; i < totalChunks; i++) {
+    if (options.signal?.aborted) {
+      throw new Error('Upload cancelled');
+    }
+
+    const start = i * chunkSize;
+    const end = Math.min(start + chunkSize, totalSize);
+    const chunkBytes = fileBytes.slice(start, end);
+    const chunkBlob = new Blob([chunkBytes.buffer as ArrayBuffer], { type: 'application/octet-stream' });
+
+    let attempts = 0;
+    let uploaded = false;
+
+    while (!uploaded && attempts < 3) {
+      try {
+        attempts++;
+        const formData = new FormData();
+        formData.append('file', chunkBlob, `chunk_${i}`);
+        formData.append('uploadId', uploadId);
+        formData.append('chunkIndex', String(i));
+
+        const headers: Record<string, string> = {
+          'x-upload-id': uploadId,
+          'x-chunk-index': String(i),
+        };
+        if (currentAccessToken) {
+          headers['Authorization'] = `Bearer ${currentAccessToken}`;
+        }
+
+        const res = await fetch(`${API_BASE}/api/media/upload/chunk`, {
+          method: 'POST',
+          body: formData,
+          headers,
+          credentials: 'include',
+          signal: options.signal,
+        });
+
+        if (!res.ok) {
+          throw new Error(`Chunk ${i} upload failed with status ${res.status}`);
+        }
+
+        uploaded = true;
+      } catch (err: any) {
+        if (attempts >= 3) throw err;
+        await new Promise((r) => setTimeout(r, 500 * attempts));
+      }
+    }
+
+    if (options.onProgress) {
+      options.onProgress(Math.round(((i + 1) / totalChunks) * 100));
+    }
+  }
+
+  // 3. Complete and assemble chunks
+  const completeRes = await apiRequest<{ success: boolean; fileId: string; mediaUrl: string }>(
+    '/api/media/upload/complete',
+    {
+      method: 'POST',
+      body: JSON.stringify({ uploadId, totalChunks }),
+      signal: options.signal,
+    }
+  );
+
+  return completeRes;
 }
 
 export async function apiDownloadEncryptedMedia(mediaUrl: string): Promise<Uint8Array> {

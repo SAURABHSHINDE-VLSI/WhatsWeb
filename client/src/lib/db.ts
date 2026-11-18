@@ -59,6 +59,7 @@ interface EditorialChatDB extends DBSchema {
       'by-partner': string;
       'by-created': string;
       'by-status': string;
+      'by-partner-created': [string, string];
     };
   };
   chats: {
@@ -79,30 +80,36 @@ let dbPromise: Promise<IDBPDatabase<EditorialChatDB>> | null = null;
 
 export function getDB(): Promise<IDBPDatabase<EditorialChatDB>> {
   if (!dbPromise) {
-    dbPromise = openDB<EditorialChatDB>('editorial_messenger_v1', 1, {
-      upgrade(db) {
-        // Messages store
-        const msgStore = db.createObjectStore('messages', { keyPath: 'id' });
-        msgStore.createIndex('by-partner', 'partnerId');
-        msgStore.createIndex('by-created', 'createdAt');
-        msgStore.createIndex('by-status', 'status');
+    dbPromise = openDB<EditorialChatDB>('editorial_messenger_v1', 2, {
+      upgrade(db, oldVersion, _newVersion, transaction) {
+        let msgStore;
+        if (oldVersion < 1) {
+          msgStore = db.createObjectStore('messages', { keyPath: 'id' });
+          msgStore.createIndex('by-partner', 'partnerId');
+          msgStore.createIndex('by-created', 'createdAt');
+          msgStore.createIndex('by-status', 'status');
 
-        // Chats store
-        db.createObjectStore('chats', { keyPath: 'id' });
+          db.createObjectStore('chats', { keyPath: 'id' });
+          db.createObjectStore('outbox', { keyPath: 'id' });
+          db.createObjectStore('kv');
+        } else {
+          msgStore = transaction.objectStore('messages');
+        }
 
-        // Offline Outbox store
-        db.createObjectStore('outbox', { keyPath: 'id' });
-
-        // Simple Key-Value store
-        db.createObjectStore('kv');
+        if (oldVersion < 2) {
+          if (!msgStore.indexNames.contains('by-partner-created')) {
+            msgStore.createIndex('by-partner-created', ['partnerId', 'createdAt']);
+          }
+        }
       },
     });
   }
   return dbPromise;
 }
 
-// Helper DB functions
+// 1. Batch writes to IndexedDB
 export async function saveMessagesToDB(messages: LocalMessage[]) {
+  if (messages.length === 0) return;
   const db = await getDB();
   const tx = db.transaction('messages', 'readwrite');
   for (const msg of messages) {
@@ -111,6 +118,7 @@ export async function saveMessagesToDB(messages: LocalMessage[]) {
   await tx.done;
 }
 
+// 2. Fetch all messages for partner (sorted by createdAt)
 export async function getMessagesForPartner(partnerId: string): Promise<LocalMessage[]> {
   const db = await getDB();
   const messages = await db.getAllFromIndex('messages', 'by-partner', partnerId);
@@ -119,6 +127,46 @@ export async function getMessagesForPartner(partnerId: string): Promise<LocalMes
   );
 }
 
+// 3. Paginated messages query: fast sub-millisecond cursor reading
+export async function getMessagesForPartnerPaged(
+  partnerId: string,
+  limit = 50,
+  beforeCreatedAt?: string
+): Promise<{ messages: LocalMessage[]; hasMore: boolean }> {
+  const db = await getDB();
+  const tx = db.transaction('messages', 'readonly');
+
+  try {
+    const index = tx.store.index('by-partner-created');
+    const upper = beforeCreatedAt || '\uffff';
+    const range = IDBKeyRange.bound([partnerId, ''], [partnerId, upper], false, Boolean(beforeCreatedAt));
+
+    let cursor = await index.openCursor(range, 'prev');
+    const results: LocalMessage[] = [];
+
+    while (cursor && results.length < limit) {
+      results.push(cursor.value);
+      cursor = await cursor.continue();
+    }
+
+    const hasMore = Boolean(cursor);
+    results.reverse(); // Chronological order
+    return { messages: results, hasMore };
+  } catch (err) {
+    // Fallback if compound index was not ready
+    const all = await getMessagesForPartner(partnerId);
+    let filtered = all;
+    if (beforeCreatedAt) {
+      const beforeTime = new Date(beforeCreatedAt).getTime();
+      filtered = all.filter((m) => new Date(m.createdAt).getTime() < beforeTime);
+    }
+    const slice = filtered.slice(Math.max(0, filtered.length - limit));
+    const hasMore = filtered.length > limit;
+    return { messages: slice, hasMore };
+  }
+}
+
+// 4. Update status with clientMessageId deduplication
 export async function updateMessageStatusInDB(
   messageId: string,
   clientMessageId: string | undefined,
@@ -132,7 +180,6 @@ export async function updateMessageStatusInDB(
   if (msg) {
     msg.status = status;
     if (messageId !== msg.id) {
-      // replace temporary client ID with server ID if changed
       await db.delete('messages', msg.id);
       msg.id = messageId;
     }

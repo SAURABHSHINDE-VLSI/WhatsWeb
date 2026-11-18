@@ -1,8 +1,9 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Lock, SquarePen, Pin, Mic, Image, BellOff, WifiOff, Inbox, UserPlus } from 'lucide-react';
+import { Lock, SquarePen, Pin, Mic, Image, BellOff, Inbox, UserPlus } from 'lucide-react';
 import { useChat } from '../contexts/ChatContext';
 import { apiGetContactRequests } from '../lib/api';
+import { ConnectionBanner } from '../components/ConnectionBanner';
 
 export function ChatListPage() {
   const navigate = useNavigate();
@@ -60,19 +61,7 @@ export function ChatListPage() {
   return (
     <div className="flex flex-col min-h-full" style={{ backgroundColor: 'var(--bg)', color: 'var(--ink)' }}>
       {/* Offline / Reconnecting Banner */}
-      {wsStatus === 'reconnecting' && (
-        <div
-          className="flex items-center justify-center gap-2 py-1 px-3 text-xs select-none transition-colors"
-          style={{
-            backgroundColor: 'var(--surface-1)',
-            color: 'var(--muted)',
-            borderBottom: '1px solid var(--line)',
-          }}
-        >
-          <WifiOff size={13} />
-          <span>Reconnecting to network...</span>
-        </div>
-      )}
+      <ConnectionBanner status={wsStatus} />
 
       {/* Top Header */}
       <header className="px-5 pt-4 pb-2 flex items-baseline justify-between pt-safe">

@@ -1,5 +1,6 @@
 import { initCrypto } from './crypto';
-import { apiUploadEncryptedMedia, apiDownloadEncryptedMedia } from './api';
+import { apiUploadEncryptedMediaChunked, apiDownloadEncryptedMedia } from './api';
+import { compressImageWorker, encryptMediaWorker, decryptMediaWorker } from './workerClient';
 
 export interface EncryptedMediaMetadata {
   mediaUrl: string;       // Strict relative path: /api/media/...
@@ -8,6 +9,9 @@ export interface EncryptedMediaMetadata {
   mimeType: string;       // Validated safe MIME type
   fileName?: string;
   fileSize: number;
+  thumbnail?: string;     // Instant 32x32 WebP data URL for blur placeholder
+  width?: number;
+  height?: number;
 }
 
 const MAX_MEDIA_SIZE_BYTES = 25 * 1024 * 1024; // 25 MB strict cap
@@ -29,6 +33,18 @@ const ALLOWED_MIME_TYPES = new Set([
 const objectUrlCache = new Map<string, string>();
 
 /**
+ * Revoke and clear cached object URLs to prevent memory bloat in long sessions
+ */
+export function revokeDecryptedMediaUrls(): void {
+  for (const [, url] of objectUrlCache) {
+    try {
+      URL.revokeObjectURL(url);
+    } catch {}
+  }
+  objectUrlCache.clear();
+}
+
+/**
  * Validates that mediaUrl strictly points to our own origin's /api/media/ endpoint.
  * Prevents SSRF / external origin tracking.
  */
@@ -42,11 +58,16 @@ export function validateMediaUrl(mediaUrl: string): boolean {
 
 /**
  * Encrypt a file locally using libsodium's chunk-safe crypto_secretstream_xchacha20poly1305.
- * The server sees ONLY opaque encrypted bytes.
+ * Heavy compression and encryption run off-main-thread in a Web Worker.
+ * Uploads chunked with progress callback and cancel signal support.
  */
 export async function encryptAndUploadMedia(
   file: File | Blob,
-  fallbackMimeType = 'image/jpeg'
+  fallbackMimeType = 'image/jpeg',
+  options: {
+    onProgress?: (pct: number) => void;
+    signal?: AbortSignal;
+  } = {}
 ): Promise<EncryptedMediaMetadata> {
   if (file.size > MAX_MEDIA_SIZE_BYTES) {
     throw new Error(`File size (${(file.size / 1024 / 1024).toFixed(1)}MB) exceeds the 25MB limit.`);
@@ -59,30 +80,38 @@ export async function encryptAndUploadMedia(
     throw new Error(`Unsupported or unsafe media type: ${cleanMime}`);
   }
 
-  const sodium = await initCrypto();
+  let fileToEncrypt: File | Blob = file;
+  let thumbnail = '';
+  let width = 0;
+  let height = 0;
 
-  const arrayBuffer = await file.arrayBuffer();
+  // 1. If it's an image, run client-side compression & thumbnail generation in worker
+  if (cleanMime.startsWith('image/') && cleanMime !== 'image/gif' && file instanceof File) {
+    try {
+      const compResult = await compressImageWorker(file, 1600, 0.82);
+      if (compResult.compressedBlob && compResult.compressedBlob.size > 0) {
+        fileToEncrypt = compResult.compressedBlob;
+        thumbnail = compResult.thumbnail;
+        width = compResult.width;
+        height = compResult.height;
+      }
+    } catch (e) {
+      console.warn('[Media Pipeline] Image compression failed, proceeding with original', e);
+    }
+  }
+
+  // 2. Read bytes
+  const arrayBuffer = await fileToEncrypt.arrayBuffer();
   const fileBytes = new Uint8Array(arrayBuffer);
 
-  // Generate 32-byte symmetric secretstream key
-  const key = sodium.crypto_secretstream_xchacha20poly1305_keygen();
+  // 3. Encrypt off-main-thread via Web Worker (secretstream XChaCha20-Poly1305)
+  const encResult = await encryptMediaWorker(fileBytes);
 
-  // Initialize push stream (produces 24-byte header)
-  const res = sodium.crypto_secretstream_xchacha20poly1305_init_push(key);
-  const state = res.state;
-  const header = res.header;
-
-  // Encrypt file bytes in one authenticated stream with TAG_FINAL
-  const ciphertext = sodium.crypto_secretstream_xchacha20poly1305_push(
-    state,
-    fileBytes,
-    null,
-    sodium.crypto_secretstream_xchacha20poly1305_TAG_FINAL
-  );
-
-  // Upload encrypted ciphertext to server
-  const blob = new Blob([ciphertext.buffer as ArrayBuffer], { type: 'application/octet-stream' });
-  const result = await apiUploadEncryptedMedia(blob);
+  // 4. Resumable Chunked Upload to server with progress reporting
+  const result = await apiUploadEncryptedMediaChunked(encResult.encryptedBlob, {
+    onProgress: options.onProgress,
+    signal: options.signal,
+  });
 
   if (!validateMediaUrl(result.mediaUrl)) {
     throw new Error('Server returned an invalid media URL format');
@@ -92,15 +121,18 @@ export async function encryptAndUploadMedia(
 
   const metadata: EncryptedMediaMetadata = {
     mediaUrl: result.mediaUrl,
-    key: sodium.to_base64(key),
-    header: sodium.to_base64(header),
-    mimeType: cleanMime,
+    key: encResult.keyBase64,
+    header: encResult.nonceBase64,
+    mimeType: fileToEncrypt.type || cleanMime,
     fileName,
-    fileSize: file.size,
+    fileSize: fileToEncrypt.size,
+    thumbnail,
+    width: width || undefined,
+    height: height || undefined,
   };
 
-  // Cache the local file as an object URL immediately for sender's view
-  const localUrl = URL.createObjectURL(file);
+  // Cache the local file as an object URL immediately for sender's instant view
+  const localUrl = URL.createObjectURL(fileToEncrypt);
   objectUrlCache.set(result.mediaUrl, localUrl);
 
   return metadata;
@@ -108,7 +140,7 @@ export async function encryptAndUploadMedia(
 
 /**
  * Download an encrypted ciphertext blob from the server,
- * decrypt it using crypto_secretstream_xchacha20poly1305, and return a displayable Blob URL.
+ * decrypt it using crypto_secretstream_xchacha20poly1305 in a Web Worker, and return a displayable Blob URL.
  */
 export async function downloadAndDecryptMedia(
   mediaUrl: string,
@@ -129,23 +161,37 @@ export async function downloadAndDecryptMedia(
     throw new Error(`Untrusted MIME type in media message: ${cleanMime}`);
   }
 
-  const sodium = await initCrypto();
-  const key = sodium.from_base64(keyBase64);
-  const header = sodium.from_base64(headerBase64);
-
   // Download raw ciphertext payload from own origin
   const encryptedPayload = await apiDownloadEncryptedMedia(mediaUrl);
 
-  // Initialize pull stream
-  const state = sodium.crypto_secretstream_xchacha20poly1305_init_pull(header, key);
+  // Check if header is already prepended to encryptedPayload
+  let payloadForWorker = encryptedPayload;
+  if (headerBase64) {
+    const sodium = await initCrypto();
+    const headerBytes = sodium.from_base64(headerBase64);
 
-  // Pull and authenticate payload
-  const pullResult = sodium.crypto_secretstream_xchacha20poly1305_pull(state, encryptedPayload, null);
-  if (!pullResult || pullResult.tag !== sodium.crypto_secretstream_xchacha20poly1305_TAG_FINAL) {
-    throw new Error('Encrypted media stream was truncated or tampered with');
+    // If payload does not start with header, prepend it
+    let startsWithHeader = false;
+    if (encryptedPayload.length >= headerBytes.length) {
+      startsWithHeader = true;
+      for (let i = 0; i < headerBytes.length; i++) {
+        if (encryptedPayload[i] !== headerBytes[i]) {
+          startsWithHeader = false;
+          break;
+        }
+      }
+    }
+
+    if (!startsWithHeader) {
+      const combined = new Uint8Array(headerBytes.length + encryptedPayload.length);
+      combined.set(headerBytes, 0);
+      combined.set(encryptedPayload, headerBytes.length);
+      payloadForWorker = combined;
+    }
   }
 
-  const decryptedBytes = pullResult.message;
+  // Decrypt in Web Worker off main thread
+  const decryptedBytes = await decryptMediaWorker(payloadForWorker, keyBase64);
 
   // Create Object URL for display
   const decryptedBlob = new Blob([decryptedBytes.buffer as ArrayBuffer], { type: cleanMime });

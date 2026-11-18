@@ -6,17 +6,21 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ChatProvider } from './contexts/ChatContext';
 import { CallProvider } from './contexts/CallContext';
 import { CallModal } from './components/CallModal';
-import ChatListPage from './pages/ChatListPage';
-import ConversationPage from './pages/ConversationPage';
-import ProfilePage from './pages/ProfilePage';
-import SettingsPage from './pages/SettingsPage';
-import OnboardingPage from './pages/OnboardingPage';
-import LoginPage from './pages/LoginPage';
-import ConnectPage from './pages/ConnectPage';
-import RequestsPage from './pages/RequestsPage';
-import InvitePage from './pages/InvitePage';
-import CallsPage from './pages/CallsPage';
-import SecurityDetailsPage from './pages/SecurityDetailsPage';
+import { PageSkeleton } from './components/PageSkeleton';
+import { ReloadPrompt } from './components/ReloadPrompt';
+
+// Lazy-loaded page routes for minimal initial JS bundle (< 200KB gzipped)
+const ChatListPage = React.lazy(() => import('./pages/ChatListPage'));
+const ConversationPage = React.lazy(() => import('./pages/ConversationPage'));
+const ProfilePage = React.lazy(() => import('./pages/ProfilePage'));
+const SettingsPage = React.lazy(() => import('./pages/SettingsPage'));
+const OnboardingPage = React.lazy(() => import('./pages/OnboardingPage'));
+const LoginPage = React.lazy(() => import('./pages/LoginPage'));
+const ConnectPage = React.lazy(() => import('./pages/ConnectPage'));
+const RequestsPage = React.lazy(() => import('./pages/RequestsPage'));
+const InvitePage = React.lazy(() => import('./pages/InvitePage'));
+const CallsPage = React.lazy(() => import('./pages/CallsPage'));
+const SecurityDetailsPage = React.lazy(() => import('./pages/SecurityDetailsPage'));
 
 interface NavTabItem {
   label: string;
@@ -45,7 +49,9 @@ export function Layout() {
     >
       {/* Scrollable View Area */}
       <main className="flex-1 overflow-y-auto no-scrollbar relative">
-        <Outlet />
+        <React.Suspense fallback={<PageSkeleton />}>
+          <Outlet />
+        </React.Suspense>
       </main>
 
       {/* 3-Tab Bottom Navigation Bar */}
@@ -135,32 +141,35 @@ export default function App() {
           <ChatProvider>
             <BrowserRouter>
               <CallModal />
-              <Routes>
-                {/* Public Auth Routes */}
-                <Route path="/login" element={<LoginPage />} />
-                <Route path="/invite/:code" element={<InvitePage />} />
-                <Route path="/onboarding" element={<OnboardingPage />} />
+              <ReloadPrompt />
+              <React.Suspense fallback={<PageSkeleton />}>
+                <Routes>
+                  {/* Public Auth Routes */}
+                  <Route path="/login" element={<LoginPage />} />
+                  <Route path="/invite/:code" element={<InvitePage />} />
+                  <Route path="/onboarding" element={<OnboardingPage />} />
 
-                {/* Protected Routes */}
-                <Route element={<ProtectedRoute />}>
-                  {/* Tabbed Layout */}
-                  <Route element={<Layout />}>
-                    <Route path="/" element={<ChatListPage />} />
-                    <Route path="/calls" element={<CallsPage />} />
-                    <Route path="/settings" element={<SettingsPage />} />
+                  {/* Protected Routes */}
+                  <Route element={<ProtectedRoute />}>
+                    {/* Tabbed Layout */}
+                    <Route element={<Layout />}>
+                      <Route path="/" element={<ChatListPage />} />
+                      <Route path="/calls" element={<CallsPage />} />
+                      <Route path="/settings" element={<SettingsPage />} />
+                    </Route>
+
+                    {/* Full Screen Screens */}
+                    <Route path="/new-chat" element={<ConnectPage />} />
+                    <Route path="/requests" element={<RequestsPage />} />
+                    <Route path="/chat/:id" element={<ConversationPage />} />
+                    <Route path="/profile/:id" element={<ProfilePage />} />
+                    <Route path="/security/:id" element={<SecurityDetailsPage />} />
                   </Route>
 
-                  {/* Full Screen Screens */}
-                  <Route path="/new-chat" element={<ConnectPage />} />
-                  <Route path="/requests" element={<RequestsPage />} />
-                  <Route path="/chat/:id" element={<ConversationPage />} />
-                  <Route path="/profile/:id" element={<ProfilePage />} />
-                  <Route path="/security/:id" element={<SecurityDetailsPage />} />
-                </Route>
-
-                {/* Fallback route */}
-                <Route path="*" element={<Navigate to="/" replace />} />
-              </Routes>
+                  {/* Fallback route */}
+                  <Route path="*" element={<Navigate to="/" replace />} />
+                </Routes>
+              </React.Suspense>
             </BrowserRouter>
           </ChatProvider>
         </CallProvider>

@@ -45,7 +45,10 @@ interface ChatContextValue {
     replyTo?: any,
     mediaUrl?: string
   ) => Promise<void>;
-  sendMediaFile: (file: File) => Promise<void>;
+  sendMediaFile: (
+    file: File,
+    options?: { onProgress?: (pct: number) => void; signal?: AbortSignal }
+  ) => Promise<void>;
   deleteMessage: (messageId: string) => Promise<void>;
   reactToMessage: (messageId: string, reaction: string) => Promise<void>;
   markAsRead: (partnerId: string) => Promise<void>;
@@ -498,10 +501,10 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   );
 
   const sendMediaFile = useCallback(
-    async (file: File) => {
+    async (file: File, options?: { onProgress?: (pct: number) => void; signal?: AbortSignal }) => {
       if (!user || !activeChatId) return;
       try {
-        const metadata = await encryptAndUploadMedia(file);
+        const metadata = await encryptAndUploadMedia(file, undefined, options);
         // Send E2EE message carrying encrypted media metadata inside ciphertext
         await sendMessage(
           JSON.stringify({
@@ -511,6 +514,9 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
             header: metadata.header,
             mimeType: metadata.mimeType,
             fileSize: metadata.fileSize,
+            thumbnail: metadata.thumbnail,
+            width: metadata.width,
+            height: metadata.height,
           }),
           file.type.startsWith('audio/') ? 'voice' : 'photo',
           undefined,
@@ -518,7 +524,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         );
       } catch (err: any) {
         console.error('[ChatContext] Failed to encrypt/upload media', err);
-        alert(err.message || 'Media upload and encryption failed');
+        throw err;
       }
     },
     [user, activeChatId, sendMessage]

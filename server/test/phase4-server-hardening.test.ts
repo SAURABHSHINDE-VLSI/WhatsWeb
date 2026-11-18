@@ -242,3 +242,46 @@ test('Phase 4: Security Hardening — Media Path Traversal Prevention', async ()
   });
   assert.equal(notFoundRes.statusCode, 404);
 });
+
+test('Phase A: Resumable Chunked Media Upload Validation & Init', async () => {
+  const app = await buildTestApp();
+  const token = app.jwt.sign({ userId: 'chunk_tester', username: 'chunktester', sessionId: 's1' });
+
+  // 1. Unauthenticated request rejected
+  const unauthRes = await app.inject({
+    method: 'POST',
+    url: '/api/media/upload/init',
+    payload: { totalChunks: 2, totalSize: 1024 },
+  });
+  assert.equal(unauthRes.statusCode, 401);
+
+  // 2. Reject size exceeding 25MB
+  const oversizeRes = await app.inject({
+    method: 'POST',
+    url: '/api/media/upload/init',
+    headers: { Authorization: `Bearer ${token}` },
+    payload: { totalChunks: 10, totalSize: 30 * 1024 * 1024 },
+  });
+  assert.equal(oversizeRes.statusCode, 400);
+
+  // 3. Valid init request
+  const validInitRes = await app.inject({
+    method: 'POST',
+    url: '/api/media/upload/init',
+    headers: { Authorization: `Bearer ${token}` },
+    payload: { totalChunks: 3, totalSize: 1500 },
+  });
+  assert.equal(validInitRes.statusCode, 201);
+  const data = JSON.parse(validInitRes.body);
+  assert.equal(data.success, true);
+  assert.match(data.uploadId, /^[a-f0-9]{32}$/);
+
+  // 4. Complete with missing chunks fails
+  const completeRes = await app.inject({
+    method: 'POST',
+    url: '/api/media/upload/complete',
+    headers: { Authorization: `Bearer ${token}` },
+    payload: { uploadId: data.uploadId, totalChunks: 3 },
+  });
+  assert.equal(completeRes.statusCode, 400);
+});

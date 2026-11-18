@@ -113,6 +113,12 @@ export async function websocketRoutes(app: FastifyInstance) {
 
         const currentUserId = authenticatedUserId;
 
+        // 1. Sync messages since last acknowledged message ID
+        if (event === 'message:sync') {
+          await syncUndeliveredMessages(socket, currentUserId, data.lastMessageId);
+          return;
+        }
+
         // 2. Encrypted message forwarding
         if (event === 'message:send') {
           const {
@@ -437,6 +443,67 @@ export async function websocketRoutes(app: FastifyInstance) {
   });
 }
 
+async function syncUndeliveredMessages(socket: WebSocket, userId: string, lastMessageId?: string) {
+  try {
+    const whereClause: any = {
+      receiverId: userId,
+      status: { in: ['sent', 'delivered'] },
+    };
+    if (lastMessageId) {
+      const lastMsg = await prisma.message.findUnique({ where: { id: lastMessageId } });
+      if (lastMsg) {
+        whereClause.createdAt = { gt: lastMsg.createdAt };
+      }
+    }
+    const pendingMessages = await prisma.message.findMany({
+      where: whereClause,
+      orderBy: { createdAt: 'asc' },
+      take: 100,
+    });
+
+    for (const message of pendingMessages) {
+      sendJson(socket, {
+        event: 'message:new',
+        message: {
+          id: message.id,
+          clientMessageId: message.clientMessageId,
+          senderId: message.senderId,
+          receiverId: message.receiverId,
+          ciphertext: message.content,
+          content: message.content,
+          nonce: message.nonce,
+          ephemeralKey: message.ephemeralKey,
+          recipientPreKeyId: message.recipientPreKeyId,
+          dhPublicKey: message.dhPublicKey,
+          sequence: message.sequence,
+          envelope: message.envelope,
+          type: message.type,
+          mediaUrl: message.mediaUrl,
+          status: 'delivered',
+          replyToId: message.replyToId,
+          createdAt: message.createdAt,
+        },
+      });
+
+      if (message.status === 'sent') {
+        await prisma.message.update({
+          where: { id: message.id },
+          data: { status: 'delivered', deliveredAt: new Date() },
+        });
+        broadcastToUser(message.senderId, {
+          event: 'message:ack',
+          clientMessageId: message.clientMessageId,
+          messageId: message.id,
+          status: 'delivered',
+          createdAt: message.createdAt,
+        });
+      }
+    }
+  } catch (err) {
+    console.error('[WS Sync Error]', err);
+  }
+}
+
 function registerUserSocket(socket: WebSocket, userId: string, username: string) {
   let sockets = userSockets.get(userId);
   if (!sockets) {
@@ -447,6 +514,7 @@ function registerUserSocket(socket: WebSocket, userId: string, username: string)
   socketSessions.set(socket, { userId, username });
 
   broadcastPresence(userId, true);
+  syncUndeliveredMessages(socket, userId);
   console.log(`[WS] Connected: ${username} (${userId})`);
 }
 

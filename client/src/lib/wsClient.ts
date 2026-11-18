@@ -87,6 +87,8 @@ class WebSocketClient {
   private reconnectTimer: NodeJS.Timeout | null = null;
   private pingInterval: NodeJS.Timeout | null = null;
   private explicitDisconnect = false;
+  private seenMessageIds = new Set<string>();
+  private lastDeliveredMessageId: string | null = null;
 
   // Listeners
   private statusListeners = new Set<(status: WSConnectionStatus) => void>();
@@ -200,6 +202,7 @@ class WebSocketClient {
         this.reconnectAttempt = 0;
         this.startHeartbeat();
         this.flushOutbox();
+        this.syncMessages(this.lastDeliveredMessageId || undefined);
       };
 
       this.socket.onmessage = (event) => {
@@ -249,8 +252,10 @@ class WebSocketClient {
   private scheduleReconnect() {
     if (this.explicitDisconnect || this.reconnectTimer) return;
 
-    // Exponential backoff: 1s, 2s, 4s, 8s, max 30s
-    const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempt), 30000);
+    // Exponential backoff with jitter: 1s, 2s, 4s, 8s, up to 30s + 0..500ms jitter
+    const baseDelay = Math.min(1000 * Math.pow(1.5, this.reconnectAttempt), 30000);
+    const jitter = Math.floor(Math.random() * 500);
+    const delay = Math.round(baseDelay + jitter);
     this.reconnectAttempt++;
 
     console.log(`[WS] Reconnecting in ${delay}ms (attempt #${this.reconnectAttempt})...`);
@@ -276,10 +281,31 @@ class WebSocketClient {
     }
   }
 
+  public syncMessages(lastMessageId?: string) {
+    if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+      this.socket.send(
+        JSON.stringify({
+          event: 'message:sync',
+          data: { lastMessageId },
+        })
+      );
+    }
+  }
+
   private handleIncomingPayload(payload: any) {
     const { event } = payload;
     if (event === 'message:new') {
-      for (const fn of this.messageListeners) fn(payload.message);
+      const msg = payload.message;
+      if (msg?.id) {
+        if (this.seenMessageIds.has(msg.id)) return;
+        this.seenMessageIds.add(msg.id);
+        if (this.seenMessageIds.size > 2000) {
+          const first = this.seenMessageIds.values().next().value;
+          if (first) this.seenMessageIds.delete(first);
+        }
+        this.lastDeliveredMessageId = msg.id;
+      }
+      for (const fn of this.messageListeners) fn(msg);
     } else if (event === 'message:ack') {
       for (const fn of this.ackListeners) fn(payload);
     } else if (event === 'message:read_receipt') {

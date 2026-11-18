@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import {
   ChevronLeft,
   Phone,
@@ -17,10 +18,12 @@ import {
   AlertTriangle,
   ShieldAlert,
   Lock,
+  ChevronDown,
 } from 'lucide-react';
 import { useChat } from '../contexts/ChatContext';
 import { useCall } from '../contexts/CallContext';
 import { downloadAndDecryptMedia } from '../lib/encryptedMedia';
+import { ConnectionBanner } from '../components/ConnectionBanner';
 
 interface DisplayMessage {
   id: string;
@@ -38,13 +41,29 @@ interface DisplayMessage {
     header: string;
     mimeType: string;
     caption?: string;
+    thumbnail?: string;
+    width?: number;
+    height?: number;
   } | null;
   isDecryptionFailure?: boolean;
   reaction?: string;
   reactionCount?: number;
 }
 
-function DecryptedImage({ payload }: { payload: { mediaUrl: string; key: string; header: string; mimeType: string } }) {
+// Progressive image with instant 32x32 blurred thumbnail preview while worker decrypts
+const DecryptedImage = React.memo(function DecryptedImage({
+  payload,
+}: {
+  payload: {
+    mediaUrl: string;
+    key: string;
+    header: string;
+    mimeType: string;
+    thumbnail?: string;
+    width?: number;
+    height?: number;
+  };
+}) {
   const [src, setSrc] = useState<string | null>(null);
   const [error, setError] = useState(false);
 
@@ -65,24 +84,246 @@ function DecryptedImage({ payload }: { payload: { mediaUrl: string; key: string;
 
   if (error) {
     return (
-      <div className="w-56 h-36 flex flex-col items-center justify-center p-3 text-center bg-black/10 text-xs text-[var(--heart)]">
+      <div className="w-60 h-40 flex flex-col items-center justify-center p-3 text-center bg-black/10 text-xs text-[var(--heart)]">
         <ShieldAlert size={20} className="mb-1" />
         <span>Failed to decrypt media</span>
       </div>
     );
   }
 
-  if (!src) {
+  return (
+    <div className="relative w-60 h-40 overflow-hidden bg-black/5 rounded-lg">
+      {/* Instant blurred thumbnail placeholder */}
+      {payload.thumbnail && !src && (
+        <img
+          src={payload.thumbnail}
+          alt="Preview"
+          className="absolute inset-0 w-full h-full object-cover filter blur-sm scale-105"
+        />
+      )}
+
+      {/* Loading state indicator if no thumbnail */}
+      {!src && !payload.thumbnail && (
+        <div className="absolute inset-0 flex items-center justify-center text-xs text-[var(--muted)] animate-pulse">
+          <Lock size={15} className="mr-1.5" />
+          <span>Decrypting...</span>
+        </div>
+      )}
+
+      {/* Full decrypted image */}
+      {src && (
+        <img
+          src={src}
+          alt="Decrypted media"
+          className="relative w-full h-full object-cover transition-opacity duration-200"
+          style={{ opacity: src ? 1 : 0 }}
+        />
+      )}
+    </div>
+  );
+});
+
+// Memoized single message row
+interface MessageRowProps {
+  msg: DisplayMessage;
+  isSelected: boolean;
+  playingVoiceId: string | null;
+  onSelect: (id: string) => void;
+  onToggleVoice: (id: string) => void;
+}
+
+const MessageRow = React.memo<MessageRowProps>(function MessageRow({
+  msg,
+  playingVoiceId,
+  onSelect,
+  onToggleVoice,
+}) {
+  const isMe = msg.sender === 'me';
+
+  if (isMe) {
     return (
-      <div className="w-56 h-36 flex items-center justify-center bg-black/5 text-xs text-[var(--muted)] animate-pulse">
-        <Lock size={16} className="mr-1.5" />
-        <span>Decrypting media...</span>
+      <div
+        className="flex flex-col items-end self-end max-w-[82%] cursor-pointer group ml-auto py-1"
+        onClick={(e) => {
+          e.stopPropagation();
+          onSelect(msg.id);
+        }}
+      >
+        {msg.mediaPayload && (
+          <div
+            className="mb-1.5 overflow-hidden border shadow-xs"
+            style={{
+              borderRadius: 'var(--radius-bubble-sent)',
+              borderColor: 'var(--line)',
+            }}
+          >
+            <DecryptedImage payload={msg.mediaPayload} />
+          </div>
+        )}
+
+        <div
+          className="px-3.5 py-2.5 break-words select-text transition-opacity group-hover:opacity-95 shadow-xs"
+          style={{
+            backgroundColor: 'var(--sent-bubble)',
+            color: 'var(--sent-bubble-ink)',
+            borderRadius: 'var(--radius-bubble-sent)',
+            fontSize: 'var(--text-message)',
+            lineHeight: 1.45,
+          }}
+        >
+          {msg.quote && (
+            <div
+              className="text-xs mb-1.5 pl-2 border-l-2 leading-snug"
+              style={{
+                borderColor: 'rgba(255, 255, 255, 0.6)',
+                color: 'var(--sent-bubble-ink)',
+                opacity: 0.9,
+              }}
+            >
+              <strong className="font-medium block">{msg.quote.author}</strong>
+              <span className="line-clamp-1">{msg.quote.text}</span>
+            </div>
+          )}
+
+          {msg.text}
+        </div>
+
+        <div
+          className="flex items-center gap-1 mt-1 text-[11px] tnum select-none px-1"
+          style={{ color: 'var(--muted)' }}
+        >
+          {msg.reaction && (
+            <span className="mr-1" style={{ color: 'var(--heart)' }}>
+              {msg.reaction} {msg.reactionCount}
+            </span>
+          )}
+          <span>{msg.time}</span>
+          {msg.status === 'pending' ? (
+            <span title="Queued offline">
+              <Clock size={13} strokeWidth={1.8} style={{ color: 'var(--muted)' }} />
+            </span>
+          ) : msg.status === 'read' ? (
+            <span title="Read">
+              <CheckCheck size={14} strokeWidth={1.75} style={{ color: 'var(--accent)' }} />
+            </span>
+          ) : msg.status === 'delivered' ? (
+            <span title="Delivered">
+              <CheckCheck size={14} strokeWidth={1.75} style={{ color: 'var(--muted)' }} />
+            </span>
+          ) : (
+            <span title="Sent">
+              <Check size={14} strokeWidth={1.75} style={{ color: 'var(--muted)' }} />
+            </span>
+          )}
+        </div>
       </div>
     );
   }
 
-  return <img src={src} alt="Decrypted media" className="w-56 h-36 object-cover" />;
-}
+  // Received message
+  return (
+    <div
+      className="flex flex-col items-start self-start max-w-[82%] cursor-pointer group mr-auto py-1"
+      onClick={(e) => {
+        e.stopPropagation();
+        onSelect(msg.id);
+      }}
+    >
+      {msg.mediaPayload && (
+        <div
+          className="mb-1.5 overflow-hidden shadow-xs"
+          style={{ borderRadius: 'var(--radius-sm)' }}
+        >
+          <DecryptedImage payload={msg.mediaPayload} />
+        </div>
+      )}
+
+      {msg.isDecryptionFailure ? (
+        <div
+          className="flex items-center gap-2 p-2.5 rounded-xl text-xs"
+          style={{
+            backgroundColor: 'rgba(180, 69, 47, 0.1)',
+            color: 'var(--heart)',
+            border: '1px solid rgba(180, 69, 47, 0.25)',
+          }}
+        >
+          <ShieldAlert size={16} className="shrink-0" />
+          <span>Could not decrypt message — ask contact to resend</span>
+        </div>
+      ) : msg.isVoice ? (
+        <div
+          className="flex items-center gap-3 p-2.5 select-none transition-opacity group-hover:opacity-90 shadow-xs"
+          style={{
+            backgroundColor: 'var(--surface-1)',
+            borderRadius: 'var(--radius-md)',
+            minWidth: '220px',
+          }}
+        >
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleVoice(msg.id);
+            }}
+            className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 cursor-pointer transition-transform active:scale-90"
+            style={{
+              backgroundColor: 'var(--ink)',
+              color: 'var(--bg)',
+            }}
+          >
+            {playingVoiceId === msg.id ? (
+              <Pause size={14} fill="currentColor" />
+            ) : (
+              <Play size={14} fill="currentColor" className="ml-0.5" />
+            )}
+          </button>
+
+          <div className="flex-1 flex items-center gap-0.5 h-4">
+            {[6, 12, 16, 8, 14, 10, 6, 12, 4, 14, 8, 4].map((h, i) => (
+              <span
+                key={i}
+                className="flex-1 rounded-xs transition-opacity duration-300"
+                style={{
+                  height: `${h}px`,
+                  backgroundColor:
+                    playingVoiceId === msg.id && i < 6 ? 'var(--accent)' : 'var(--ink)',
+                  opacity: playingVoiceId === msg.id && i < 6 ? 1 : 0.6,
+                }}
+              />
+            ))}
+          </div>
+
+          <span className="text-xs tnum shrink-0" style={{ color: 'var(--muted)' }}>
+            {playingVoiceId === msg.id ? '0:18' : msg.voiceDuration || '0:42'}
+          </span>
+        </div>
+      ) : (
+        <div
+          className="py-1 break-words select-text"
+          style={{
+            color: 'var(--ink)',
+            fontSize: 'var(--text-message)',
+            lineHeight: 1.45,
+          }}
+        >
+          {msg.text}
+        </div>
+      )}
+
+      <div
+        className="flex items-center gap-1 mt-0.5 text-[11px] tnum select-none"
+        style={{ color: 'var(--muted)' }}
+      >
+        <span>{msg.time}</span>
+        {msg.reaction && (
+          <span className="ml-1" style={{ color: 'var(--heart)' }}>
+            {msg.reaction} {msg.reactionCount}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+});
 
 export function ConversationPage() {
   const navigate = useNavigate();
@@ -102,6 +343,7 @@ export function ConversationPage() {
     sendTyping,
     safetyNumberWarning,
     acknowledgeSafetyNumber,
+    wsStatus,
   } = useChat();
 
   const { startCall } = useCall();
@@ -110,11 +352,16 @@ export function ConversationPage() {
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
   const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const [sendError, setSendError] = useState<string | null>(null);
 
-  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  // Scroll tracking and anchoring
+  const [isAtBottom, setIsAtBottom] = useState(true);
+  const [unseenCount, setUnseenCount] = useState(0);
+  const parentRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const previousMessageCount = useRef(0);
 
   // Sync active partner in ChatContext
   useEffect(() => {
@@ -164,16 +411,64 @@ export function ConversationPage() {
     });
   }, [liveMessages]);
 
-  // Scroll to bottom on new message
+  // TanStack Virtualizer with dynamic measurement
+  const virtualizer = useVirtualizer({
+    count: displayMessages.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 72,
+    overscan: 8,
+  });
+
+  const scrollToBottom = useCallback(
+    (behavior: 'auto' | 'smooth' = 'smooth') => {
+      if (displayMessages.length === 0) return;
+      virtualizer.scrollToIndex(displayMessages.length - 1, { align: 'end', behavior });
+      setUnseenCount(0);
+    },
+    [displayMessages.length, virtualizer]
+  );
+
+  // Scroll listener to update isAtBottom state
+  const handleScroll = useCallback(() => {
+    const el = parentRef.current;
+    if (!el) return;
+    const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const atBottom = distanceToBottom < 80;
+    setIsAtBottom(atBottom);
+    if (atBottom) {
+      setUnseenCount(0);
+    }
+  }, []);
+
+  // Scroll anchoring: pin to bottom on new message if user is already at bottom
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [displayMessages.length]);
+    const currentCount = displayMessages.length;
+    const diff = currentCount - previousMessageCount.current;
+    previousMessageCount.current = currentCount;
+
+    if (diff > 0) {
+      if (isAtBottom) {
+        scrollToBottom('smooth');
+      } else {
+        setUnseenCount((prev) => prev + diff);
+      }
+    }
+  }, [displayMessages.length, isAtBottom, scrollToBottom]);
+
+  // Initial scroll to bottom on mount / chat open
+  useEffect(() => {
+    if (displayMessages.length > 0) {
+      const timer = setTimeout(() => {
+        scrollToBottom('auto');
+      }, 50);
+      return () => clearTimeout(timer);
+    }
+  }, [partnerId]); // Run once when chat opens
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setInputText(e.target.value);
     setSendError(null);
 
-    // Typing debounce
     sendTyping(true);
     if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
     typingTimeoutRef.current = setTimeout(() => {
@@ -191,6 +486,7 @@ export function ConversationPage() {
 
     try {
       await sendMessage(textToSend, 'text');
+      scrollToBottom('smooth');
     } catch (err: any) {
       setSendError(err.message || 'Failed to send message');
     }
@@ -202,12 +498,17 @@ export function ConversationPage() {
 
     try {
       setIsUploading(true);
+      setUploadProgress(0);
       setSendError(null);
-      await sendMediaFile(file);
+      await sendMediaFile(file, {
+        onProgress: (pct) => setUploadProgress(pct),
+      });
+      scrollToBottom('smooth');
     } catch (err: any) {
       setSendError(err.message || 'File upload failed');
     } finally {
       setIsUploading(false);
+      setUploadProgress(0);
       e.target.value = '';
     }
   };
@@ -222,9 +523,13 @@ export function ConversationPage() {
     setSelectedMessageId(null);
   };
 
-  const toggleVoicePlayback = (id: string) => {
+  const toggleVoicePlayback = useCallback((id: string) => {
     setPlayingVoiceId((prev) => (prev === id ? null : id));
-  };
+  }, []);
+
+  const selectMessage = useCallback((id: string) => {
+    setSelectedMessageId((prev) => (prev === id ? null : id));
+  }, []);
 
   const isTyping = isPartnerTyping(partnerId);
   const isOnline = isUserOnline(partnerId);
@@ -235,6 +540,8 @@ export function ConversationPage() {
     .join('')
     .slice(0, 2)
     .toUpperCase();
+
+  const virtualItems = virtualizer.getVirtualItems();
 
   return (
     <div
@@ -347,10 +654,13 @@ export function ConversationPage() {
         </div>
       </header>
 
+      {/* Network Offline / Reconnecting Banner */}
+      <ConnectionBanner status={wsStatus} />
+
       {/* Safety Number Changed Warning Banner */}
       {safetyNumberWarning && (
         <div
-          className="px-4 py-2.5 flex items-center justify-between text-xs z-30 shadow-sm"
+          className="px-4 py-2.5 flex items-center justify-between text-xs z-30 shadow-xs"
           style={{
             backgroundColor: 'rgba(180, 69, 47, 0.12)',
             borderBottom: '1px solid rgba(180, 69, 47, 0.3)',
@@ -450,8 +760,13 @@ export function ConversationPage() {
         </div>
       )}
 
-      {/* Conversation Thread Messages */}
-      <main className="flex-1 overflow-y-auto px-4 py-4 space-y-4 no-scrollbar">
+      {/* Virtualized Message Scroll Container */}
+      <main
+        ref={parentRef}
+        onScroll={handleScroll}
+        className="flex-1 overflow-y-auto px-4 py-2 no-scrollbar relative"
+        style={{ overflowAnchor: 'none' }}
+      >
         {displayMessages.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center py-20 gap-2 select-none opacity-60">
             <Lock size={20} style={{ color: 'var(--accent)' }} />
@@ -460,190 +775,84 @@ export function ConversationPage() {
             </p>
           </div>
         ) : (
-          displayMessages.map((msg) => {
-            // 1. SENT MESSAGE: Bubble in var(--sent-bubble)
-            if (msg.sender === 'me') {
+          <div
+            style={{
+              height: `${virtualizer.getTotalSize()}px`,
+              width: '100%',
+              position: 'relative',
+            }}
+          >
+            {virtualItems.map((virtualRow) => {
+              const msg = displayMessages[virtualRow.index];
               return (
                 <div
                   key={msg.id}
-                  className="flex flex-col items-end self-end max-w-[82%] cursor-pointer group ml-auto"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setSelectedMessageId((prev) => (prev === msg.id ? null : msg.id));
+                  data-index={virtualRow.index}
+                  ref={virtualizer.measureElement}
+                  style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    width: '100%',
+                    transform: `translateY(${virtualRow.start}px)`,
                   }}
                 >
-                  {/* Photo attachment if sent */}
-                  {msg.mediaPayload && (
-                    <div
-                      className="mb-1.5 overflow-hidden border"
-                      style={{
-                        borderRadius: 'var(--radius-bubble-sent)',
-                        borderColor: 'var(--line)',
-                      }}
-                    >
-                      <DecryptedImage payload={msg.mediaPayload} />
-                    </div>
-                  )}
-
-                  <div
-                    className="px-3.5 py-2.5 break-words select-text transition-opacity group-hover:opacity-95"
-                    style={{
-                      backgroundColor: 'var(--sent-bubble)',
-                      color: 'var(--sent-bubble-ink)',
-                      borderRadius: 'var(--radius-bubble-sent)',
-                      fontSize: 'var(--text-message)',
-                      lineHeight: 1.45,
-                    }}
-                  >
-                    {/* Quote block if reply */}
-                    {msg.quote && (
-                      <div
-                        className="text-xs mb-1.5 pl-2 border-l-2 leading-snug"
-                        style={{
-                          borderColor: 'rgba(255, 255, 255, 0.6)',
-                          color: 'var(--sent-bubble-ink)',
-                          opacity: 0.9,
-                        }}
-                      >
-                        <strong className="font-medium block">{msg.quote.author}</strong>
-                        <span className="line-clamp-1">{msg.quote.text}</span>
-                      </div>
-                    )}
-
-                    {msg.text}
-                  </div>
-
-                  {/* Sent Ticks & Timestamp under bubble */}
-                  <div className="flex items-center gap-1 mt-1 text-[11px] tnum select-none px-1" style={{ color: 'var(--muted)' }}>
-                    {msg.reaction && (
-                      <span className="mr-1" style={{ color: 'var(--heart)' }}>
-                        {msg.reaction} {msg.reactionCount}
-                      </span>
-                    )}
-                    <span>{msg.time}</span>
-                    {msg.status === 'pending' ? (
-                      <span title="Queued offline"><Clock size={13} strokeWidth={1.8} style={{ color: 'var(--muted)' }} /></span>
-                    ) : msg.status === 'read' ? (
-                      <span title="Read"><CheckCheck size={14} strokeWidth={1.75} style={{ color: 'var(--accent)' }} /></span>
-                    ) : msg.status === 'delivered' ? (
-                      <span title="Delivered"><CheckCheck size={14} strokeWidth={1.75} style={{ color: 'var(--muted)' }} /></span>
-                    ) : (
-                      <span title="Sent"><Check size={14} strokeWidth={1.75} style={{ color: 'var(--muted)' }} /></span>
-                    )}
-                  </div>
+                  <MessageRow
+                    msg={msg}
+                    isSelected={selectedMessageId === msg.id}
+                    playingVoiceId={playingVoiceId}
+                    onSelect={selectMessage}
+                    onToggleVoice={toggleVoicePlayback}
+                  />
                 </div>
               );
-            }
-
-            // 2. RECEIVED MESSAGE: Editorial plain text with signature line styling
-            return (
-              <div
-                key={msg.id}
-                className="flex flex-col items-start self-start max-w-[82%] cursor-pointer group mr-auto"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setSelectedMessageId((prev) => (prev === msg.id ? null : msg.id));
-                }}
-              >
-                {/* Photo Message */}
-                {msg.mediaPayload && (
-                  <div
-                    className="mb-1.5 overflow-hidden"
-                    style={{ borderRadius: 'var(--radius-sm)' }}
-                  >
-                    <DecryptedImage payload={msg.mediaPayload} />
-                  </div>
-                )}
-
-                {/* Decryption Failure Alert */}
-                {msg.isDecryptionFailure ? (
-                  <div
-                    className="flex items-center gap-2 p-2.5 rounded-xl text-xs"
-                    style={{
-                      backgroundColor: 'rgba(180, 69, 47, 0.1)',
-                      color: 'var(--heart)',
-                      border: '1px solid rgba(180, 69, 47, 0.25)',
-                    }}
-                  >
-                    <ShieldAlert size={16} className="shrink-0" />
-                    <span>Could not decrypt message — ask contact to resend</span>
-                  </div>
-                ) : msg.isVoice ? (
-                  /* Voice Message */
-                  <div
-                    className="flex items-center gap-3 p-2.5 select-none transition-opacity group-hover:opacity-90"
-                    style={{
-                      backgroundColor: 'var(--surface-1)',
-                      borderRadius: 'var(--radius-md)',
-                      minWidth: '220px',
-                    }}
-                  >
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        toggleVoicePlayback(msg.id);
-                      }}
-                      className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 cursor-pointer transition-transform active:scale-90"
-                      style={{
-                        backgroundColor: 'var(--ink)',
-                        color: 'var(--bg)',
-                      }}
-                    >
-                      {playingVoiceId === msg.id ? (
-                        <Pause size={14} fill="currentColor" />
-                      ) : (
-                        <Play size={14} fill="currentColor" className="ml-0.5" />
-                      )}
-                    </button>
-
-                    <div className="flex-1 flex items-center gap-0.5 h-4">
-                      {[6, 12, 16, 8, 14, 10, 6, 12, 4, 14, 8, 4].map((h, i) => (
-                        <span
-                          key={i}
-                          className="flex-1 rounded-xs transition-opacity duration-300"
-                          style={{
-                            height: `${h}px`,
-                            backgroundColor: playingVoiceId === msg.id && i < 6 ? 'var(--accent)' : 'var(--ink)',
-                            opacity: playingVoiceId === msg.id && i < 6 ? 1 : 0.6,
-                          }}
-                        />
-                      ))}
-                    </div>
-
-                    <span className="text-xs tnum shrink-0" style={{ color: 'var(--muted)' }}>
-                      {playingVoiceId === msg.id ? '0:18' : msg.voiceDuration || '0:42'}
-                    </span>
-                  </div>
-                ) : (
-                  /* Plain text received message */
-                  <div
-                    className="py-1 break-words select-text"
-                    style={{
-                      color: 'var(--ink)',
-                      fontSize: 'var(--text-message)',
-                      lineHeight: 1.45,
-                    }}
-                  >
-                    {msg.text}
-                  </div>
-                )}
-
-                {/* Timestamp & Reactions */}
-                <div className="flex items-center gap-1 mt-0.5 text-[11px] tnum select-none" style={{ color: 'var(--muted)' }}>
-                  <span>{msg.time}</span>
-                  {msg.reaction && (
-                    <span className="ml-1" style={{ color: 'var(--heart)' }}>
-                      {msg.reaction} {msg.reactionCount}
-                    </span>
-                  )}
-                </div>
-              </div>
-            );
-          })
+            })}
+          </div>
         )}
-        <div ref={messagesEndRef} />
       </main>
+
+      {/* Jump to latest button with unread count badge */}
+      {!isAtBottom && displayMessages.length > 0 && (
+        <button
+          type="button"
+          onClick={() => scrollToBottom('smooth')}
+          aria-label="Jump to latest message"
+          className="absolute bottom-20 right-4 z-40 flex items-center gap-1.5 px-3 py-2 rounded-full shadow-lg border backdrop-blur-md cursor-pointer transition-transform active:scale-95 animate-in fade-in"
+          style={{
+            backgroundColor: 'var(--surface-2)',
+            borderColor: 'var(--line)',
+            color: 'var(--ink)',
+          }}
+        >
+          <ChevronDown size={16} />
+          {unseenCount > 0 && (
+            <span
+              className="px-1.5 py-0.2 rounded-full text-[11px] font-bold"
+              style={{
+                backgroundColor: 'var(--accent)',
+                color: 'var(--accent-ink)',
+              }}
+            >
+              {unseenCount}
+            </span>
+          )}
+        </button>
+      )}
+
+      {/* Upload Progress Bar if uploading chunked media */}
+      {isUploading && (
+        <div
+          className="px-4 py-1.5 flex items-center justify-between text-xs z-30 animate-pulse border-t"
+          style={{
+            backgroundColor: 'var(--surface-1)',
+            borderColor: 'var(--line)',
+            color: 'var(--muted)',
+          }}
+        >
+          <span>Encrypting & uploading media...</span>
+          <span className="font-semibold text-[var(--accent)]">{uploadProgress}%</span>
+        </div>
+      )}
 
       {/* Bottom Composer Bar */}
       <footer
@@ -682,7 +891,9 @@ export function ConversationPage() {
                   handleSendMessage();
                 }
               }}
-              placeholder={safetyNumberWarning ? 'Verify safety number to send' : 'Write a message...'}
+              placeholder={
+                safetyNumberWarning ? 'Verify safety number to send' : 'Write a message...'
+              }
               disabled={safetyNumberWarning}
               className="w-full bg-transparent outline-none text-sm disabled:cursor-not-allowed"
               style={{
@@ -711,7 +922,9 @@ export function ConversationPage() {
               type="button"
               aria-label="Record voice note"
               disabled={safetyNumberWarning}
-              onClick={() => alert('Press and hold to record audio (encrypted with crypto_secretstream)')}
+              onClick={() =>
+                alert('Press and hold to record audio (encrypted with crypto_secretstream)')
+              }
               className="p-2 cursor-pointer transition-opacity hover:opacity-75 disabled:opacity-40 disabled:cursor-not-allowed"
               style={{ color: 'var(--muted)' }}
             >
