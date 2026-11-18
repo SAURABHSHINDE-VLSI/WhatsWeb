@@ -1,0 +1,16 @@
+{
+  "name": "whatsus",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "client",
+    "server"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace=client",
+    "dev:server": "npm run dev --workspace=server",
+    "build": "npm run build --workspace=client",
+    "build:server": "npm run build --workspace=server",
+    "build:all": "npm run build --workspace=server && npm run build --workspace=client"
+  }
+}

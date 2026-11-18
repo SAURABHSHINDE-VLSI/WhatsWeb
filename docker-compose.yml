@@ -1,0 +1,22 @@
+services:
+  whatsus:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: whatsus:latest
+    container_name: whatsus
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - HOST=0.0.0.0
+      - JWT_SECRET=editorial-calm-messenger-jwt-super-secret-key-32chars
+    volumes:
+      - whatsus-db:/app/server/prisma
+      - whatsus-uploads:/app/server/uploads
+
+volumes:
+  whatsus-db:
+  whatsus-uploads:

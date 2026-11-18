@@ -1,0 +1,143 @@
+@import url("https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400..600;1,9..144,400&family=Inter:wght@400;500;600&display=swap");
+@import "tailwindcss";
+@import "./tokens.css";
+
+@theme {
+  --font-serif: var(--font-serif);
+  --font-sans: var(--font-sans);
+
+  --color-bg: var(--bg);
+  --color-surface-1: var(--surface-1);
+  --color-surface-2: var(--surface-2);
+  --color-surface: var(--surface);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-sent-bubble: var(--sent-bubble);
+  --color-sent-bubble-ink: var(--sent-bubble-ink);
+  --color-tint: var(--tint);
+  --color-tint-1: var(--tint-1);
+  --color-tint-2: var(--tint-2);
+  --color-tint-3: var(--tint-3);
+  --color-tint-4: var(--tint-4);
+  --color-heart: var(--heart);
+}
+
+/* Base styles & rubber-band prevention */
+html {
+  overflow: hidden;
+  overscroll-behavior: none;
+  min-height: 100dvh;
+  height: 100%;
+}
+
+body {
+  overflow-y: auto;
+  overscroll-behavior: none;
+  min-height: 100dvh;
+  height: 100%;
+  font-family: var(--font-sans);
+  background-color: var(--bg);
+  color: var(--ink);
+  margin: 0;
+  padding: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Dark theme definition via html.dark */
+html.dark {
+  --bg: #14120E;
+  --surface-1: #1C1914;
+  --surface-2: #25211A;
+  --surface: #1C1914;
+  --line: #3A342B;
+  --ink: #F4EEE2;
+  --muted: #B0A793;
+  --accent: #6FB59B;
+  --accent-ink: #0C1713;
+  --sent-bubble: #3E7A68;
+  --sent-bubble-ink: #FFFFFF;
+  --heart: #E5735A;
+  --tint: #3A3428;
+  --tint-1: #4A3A2C;
+  --tint-2: #3A4030;
+  --tint-3: #2C3F38;
+  --tint-4: #43343A;
+  color-scheme: dark;
+}
+
+/* Touch optimizations & selection control */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Allow text selection in message content, inputs, and selectable areas */
+.selectable,
+.message-content,
+.message-selectable,
+input,
+textarea,
+[contenteditable="true"] {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* Safe area insets utilities */
+:root {
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+}
+
+.pt-safe {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.pl-safe {
+  padding-left: env(safe-area-inset-left, 0px);
+}
+
+.pr-safe {
+  padding-right: env(safe-area-inset-right, 0px);
+}
+
+.p-safe {
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  padding-left: env(safe-area-inset-left, 0px);
+}
+
+/* Custom scrollbar hiding for webkit and standard browsers */
+::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+* {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+/* Tabular figures for timestamps and numbers */
+.tnum {
+  font-feature-settings: 'tnum' 1, 'cv02' 1, 'cv03' 1;
+  font-variant-numeric: tabular-nums;
+}

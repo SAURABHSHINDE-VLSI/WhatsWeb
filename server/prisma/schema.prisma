@@ -1,0 +1,113 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model User {
+  id               String         @id @default(cuid())
+  username         String         @unique
+  phoneNumber      String?        @unique
+  displayName      String
+  passwordHash     String
+  avatarTint       Int            @default(0)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  sentMessages     Message[]      @relation("SentMessages")
+  receivedMessages Message[]      @relation("ReceivedMessages")
+  sessions         Session[]
+  contacts         Contact[]      @relation("UserContacts")
+  preKeyBundle     PreKeyBundle?
+  pushSubscriptions PushSubscription[]
+}
+
+model Session {
+  id               String    @id @default(cuid())
+  userId           String
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  refreshTokenHash String    @unique
+  expiresAt        DateTime
+  createdAt        DateTime  @default(now())
+}
+
+model PreKeyBundle {
+  id                    String          @id @default(cuid())
+  userId                String          @unique
+  user                  User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  identityKey           String          // base64 public identity key
+  signedPreKey          String          // base64 public signed pre-key
+  signedPreKeySignature String          // base64 signature
+  oneTimePreKeys        OneTimePreKey[]
+  updatedAt             DateTime        @updatedAt
+}
+
+model OneTimePreKey {
+  id          String        @id @default(cuid())
+  bundleId    String
+  bundle      PreKeyBundle  @relation(fields: [bundleId], references: [id], onDelete: Cascade)
+  keyId       Int
+  publicKey   String        // base64 public key
+  consumed    Boolean       @default(false)
+  createdAt   DateTime      @default(now())
+
+  @@index([bundleId, consumed])
+}
+
+model Message {
+  id                String    @id @default(cuid())
+  clientMessageId   String?   @unique
+  senderId          String
+  sender            User      @relation("SentMessages", fields: [senderId], references: [id], onDelete: Cascade)
+  receiverId        String
+  receiver          User      @relation("ReceivedMessages", fields: [receiverId], references: [id], onDelete: Cascade)
+  content           String    // Ciphertext blob (Base64) - ZERO plaintext on server!
+  nonce             String    // 24-byte random nonce (Base64)
+  ephemeralKey      String?   // Sender's ephemeral public key for X3DH / DH Ratchet
+  recipientPreKeyId Int?      // One-time pre-key ID if consumed
+  type              String    @default("text") // text | photo | voice
+  mediaUrl          String?
+  status            String    @default("sent") // sent | delivered | read
+  replyToId         String?
+  createdAt         DateTime  @default(now())
+  deliveredAt       DateTime?
+  readAt            DateTime?
+
+  @@index([senderId, receiverId])
+  @@index([createdAt])
+}
+
+model Contact {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation("UserContacts", fields: [userId], references: [id], onDelete: Cascade)
+  contactId  String
+  isPinned   Boolean  @default(false)
+  isMuted    Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  @@unique([userId, contactId])
+}
+
+model ServerAuditLog {
+  id               String   @id @default(cuid())
+  clientMessageId  String
+  senderId         String
+  receiverId       String
+  ciphertextSample String   // Demonstrates server intercept is 100% binary ciphertext
+  nonce            String
+  createdAt        DateTime @default(now())
+}
+
+model PushSubscription {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  createdAt DateTime @default(now())
+}

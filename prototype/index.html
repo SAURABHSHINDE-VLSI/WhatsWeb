@@ -1,0 +1,1595 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <title>WhatsUS — Editorial &amp; Calm (Light vs. Redesigned Dark)</title>
+  
+  <!-- Fonts: Fraunces (Display Serif) & Inter (UI Sans) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400..600;1,9..144,400&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  
+  <!-- Lucide Icons via unpkg -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+
+  <style>
+    /* ==========================================================================
+       DESIGN TOKENS — SINGLE SOURCE OF TRUTH (tokens.css)
+       ========================================================================== */
+    /* Light Theme (Approved — Do Not Change) */
+    .theme-light {
+      --bg: #F6F2EA;
+      --surface-1: #EDE6D8;
+      --surface-2: #E3DCCD;
+      --line: #E3DCCD;
+      --ink: #1D1B18;
+      --muted: #6B655A;
+      --accent: #2F5D50;
+      --accent-ink: #FFFFFF;
+      --sent-bubble: #2F5D50;
+      --sent-bubble-ink: #FFFFFF;
+      --tint-1: #D9CDB8;
+      --tint-2: #CAD4C5;
+      --tint-3: #D9CCC5;
+      --tint-4: #CEC8D4;
+      --heart: #B4452F;
+      --header-bg: rgba(246, 242, 234, 0.88);
+      --warm-tint-overlay: transparent;
+      --device-bezel: #E2DBD0;
+      --device-shadow: rgba(40, 32, 24, 0.16);
+      color-scheme: light;
+      background-color: var(--bg);
+      color: var(--ink);
+    }
+
+    /* Redesigned Warm Dark Theme (Espresso Base, 3 Surface Levels & Mint Accent) */
+    .theme-dark {
+      --bg: #14120E;               /* Warm espresso base */
+      --surface-1: #1C1914;        /* List rows, inputs */
+      --surface-2: #25211A;        /* Sheets, raised areas, selected rows */
+      --line: #3A342B;             /* Visible warm hairlines */
+      --ink: #F4EEE2;              /* Warm cream, never pure white */
+      --muted: #B0A793;            /* Warm muted (>= 7:1 contrast on --bg) */
+      --accent: #6FB59B;           /* Brighter sage-mint */
+      --accent-ink: #0C1713;       /* High-contrast dark ink on accent */
+      --sent-bubble: #3E7A68;      /* Richer sent bubble */
+      --sent-bubble-ink: #FFFFFF;  /* White text on sent bubble */
+      --heart: #E5735A;            /* Reaction color */
+      
+      /* 4 Rotating Avatar Tints (Cream Initials) */
+      --tint-1: #4A3A2C;           /* Warm Umber */
+      --tint-2: #3A4030;           /* Olive Charcoal */
+      --tint-3: #2C3F38;           /* Deep Cypress */
+      --tint-4: #43343A;           /* Muted Plum */
+      
+      --header-bg: rgba(20, 18, 14, 0.88);
+      --warm-tint-overlay: radial-gradient(ellipse at 50% 0%, rgba(229, 115, 90, 0.035) 0%, transparent 60%);
+      --device-bezel: #25221B;
+      --device-shadow: rgba(0, 0, 0, 0.7);
+      color-scheme: dark;
+      background-color: var(--bg);
+      color: var(--ink);
+    }
+
+    /* Typography Scale */
+    :root {
+      --font-serif: 'Fraunces', Georgia, serif;
+      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      --text-title: 32px;
+      --text-contact-name: 27px;
+      --text-chat-name: 17px;
+      --text-message: 16px;
+      --text-secondary: 13px;
+      --text-meta: 12px;
+      --text-divider: 11px;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      background-color: #0A0907;
+      color: #E2DBD0;
+      min-height: 100vh;
+      overflow-x: hidden;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .tnum {
+      font-feature-settings: 'tnum' 1, 'cv02' 1, 'cv03' 1;
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* Master Top Toolbar */
+    .master-bar {
+      position: sticky;
+      top: 0;
+      z-index: 1000;
+      background: rgba(10, 9, 7, 0.94);
+      backdrop-filter: blur(20px);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      padding: 12px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .brand-wrap {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .brand-title {
+      font-family: var(--font-serif);
+      font-size: 18px;
+      font-weight: 500;
+      color: #F4EEE2;
+    }
+    .badge-approved {
+      background: rgba(47, 93, 80, 0.25);
+      border: 1px solid rgba(47, 93, 80, 0.5);
+      color: #6FB59B;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 4px;
+      letter-spacing: 0.04em;
+    }
+
+    .screen-selector-tabs {
+      display: flex;
+      gap: 6px;
+    }
+    .screen-tab-btn {
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      color: #B0A793;
+      padding: 6px 14px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .screen-tab-btn:hover {
+      background: rgba(255, 255, 255, 0.12);
+      color: #F4EEE2;
+    }
+    .screen-tab-btn.active {
+      background: #F4EEE2;
+      border-color: #F4EEE2;
+      color: #14120E;
+      font-weight: 600;
+    }
+
+    /* Comparison Stage */
+    .stage-wrap {
+      max-width: 1440px;
+      margin: 0 auto;
+      padding: 32px 24px 64px;
+    }
+
+    .comparison-container {
+      display: flex;
+      justify-content: center;
+      gap: 48px;
+      flex-wrap: wrap;
+    }
+
+    .device-column {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 14px;
+    }
+    .device-label {
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      color: #B0A793;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .pill-tag {
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-weight: 600;
+    }
+    .pill-light { background: #EDE6D8; color: #1D1B18; }
+    .pill-dark { background: #25211A; color: #6FB59B; border: 1px solid rgba(111, 181, 155, 0.3); }
+
+    /* iPhone 390 x 844 Chassis */
+    .iphone-shell {
+      width: 390px;
+      height: 844px;
+      border-radius: 50px;
+      position: relative;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 0 0 10px var(--device-bezel), 0 0 0 11px rgba(255, 255, 255, 0.06), 0 32px 80px var(--device-shadow);
+      flex-shrink: 0;
+      user-select: none;
+      transition: all 0.2s ease;
+    }
+
+    /* System Status Bar */
+    .ios-bar {
+      height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 26px;
+      z-index: 50;
+      flex-shrink: 0;
+      color: var(--ink);
+    }
+    .ios-time {
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+    }
+    .ios-icons {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    /* Home Bar */
+    .home-bar {
+      position: absolute;
+      bottom: 8px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 134px;
+      height: 5px;
+      background: var(--ink);
+      opacity: 0.24;
+      border-radius: 100px;
+      z-index: 60;
+      pointer-events: none;
+    }
+
+    /* App Screen Body */
+    .app-screen {
+      position: absolute;
+      inset: 44px 0 0 0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      background-color: var(--bg);
+    }
+
+    .scroll-body {
+      flex: 1;
+      overflow-y: auto;
+      overflow-x: hidden;
+      display: flex;
+      flex-direction: column;
+      -webkit-overflow-scrolling: touch;
+      padding-bottom: 74px; /* Space for bottom tab bar */
+    }
+    .scroll-body::-webkit-scrollbar { display: none; }
+
+    /* Bottom 3-Tab Bar */
+    .bottom-bar {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 64px;
+      display: flex;
+      align-items: center;
+      justify-content: space-around;
+      padding-bottom: 12px;
+      background: var(--header-bg);
+      backdrop-filter: blur(16px);
+      border-top: 1px solid var(--line);
+      z-index: 40;
+    }
+    .nav-tab {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--muted);
+      cursor: pointer;
+    }
+    .nav-tab.active {
+      color: var(--accent);
+      font-weight: 600;
+    }
+
+    /* Hairline */
+    .hairline {
+      height: 1px;
+      background: var(--line);
+      border: none;
+    }
+
+    /* Avatars rotating 4 warm tones with cream initials */
+    .avatar {
+      width: 46px;
+      height: 46px;
+      border-radius: 50%;
+      color: var(--ink);
+      font-family: var(--font-serif);
+      font-size: 16px;
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .avatar.tint-1 { background: var(--tint-1); }
+    .avatar.tint-2 { background: var(--tint-2); }
+    .avatar.tint-3 { background: var(--tint-3); }
+    .avatar.tint-4 { background: var(--tint-4); }
+
+    /* ==========================================================================
+       SCREEN 1: CHATS LIST
+       ========================================================================== */
+    .chats-header {
+      padding: 16px 22px 6px;
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+    }
+    .chats-title {
+      font-family: var(--font-serif);
+      font-size: var(--text-title);
+      font-weight: 500;
+      letter-spacing: -0.02em;
+      color: var(--ink);
+      line-height: 1.15;
+    }
+    .sec-notice {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 0 22px 14px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .search-wrap {
+      padding: 0 22px 14px;
+    }
+    .search-input {
+      width: 100%;
+      background: var(--surface-1);
+      border: none;
+      border-radius: 20px;
+      padding: 10px 16px;
+      font-family: var(--font-sans);
+      font-size: 14px;
+      color: var(--ink);
+      outline: none;
+    }
+    .search-input::placeholder { color: var(--muted); }
+
+    .chat-item {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 12px 22px;
+      border-bottom: 1px solid var(--line);
+      cursor: pointer;
+      transition: background-color 0.15s;
+    }
+    .chat-item:hover, .chat-item.selected {
+      background-color: var(--surface-2);
+    }
+    .chat-info {
+      flex: 1;
+      min-width: 0;
+    }
+    .chat-info-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin-bottom: 2px;
+    }
+    .chat-name {
+      font-family: var(--font-serif);
+      font-size: var(--text-chat-name);
+      font-weight: 500;
+      letter-spacing: -0.01em;
+      color: var(--ink);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .chat-item.unread .chat-name {
+      font-weight: 600;
+    }
+    .chat-time {
+      font-size: var(--text-meta);
+      color: var(--muted);
+      flex-shrink: 0;
+    }
+    .chat-info-bottom {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+    }
+    .chat-snippet {
+      font-size: 14px;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      line-height: 1.4;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .chat-item.unread .chat-snippet {
+      color: var(--ink); /* Unread chat preview uses --ink for immediate distinction */
+    }
+    .unread-badge {
+      background: var(--accent);
+      color: var(--accent-ink);
+      font-size: 11px;
+      font-weight: 600;
+      min-width: 18px;
+      height: 18px;
+      padding: 0 5px;
+      border-radius: 9px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    /* ==========================================================================
+       SCREEN 2: CONVERSATION VIEW
+       ========================================================================== */
+    .conv-wrap {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      background: var(--bg);
+      background-image: var(--warm-tint-overlay);
+    }
+    .conv-top {
+      height: 54px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 16px;
+      border-bottom: 1px solid var(--line);
+      background: var(--header-bg);
+      backdrop-filter: blur(16px);
+      z-index: 30;
+      flex-shrink: 0;
+    }
+    .conv-contact {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .conv-name-title {
+      font-family: var(--font-serif);
+      font-size: 18px;
+      font-weight: 500;
+      letter-spacing: -0.01em;
+      color: var(--ink);
+    }
+    .conv-sub {
+      font-size: 11.5px;
+      color: var(--muted);
+    }
+    .messages-stream {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px 20px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .messages-stream::-webkit-scrollbar { display: none; }
+    .day-chip {
+      align-self: center;
+      font-size: var(--text-divider);
+      font-weight: 600;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin: 4px 0 6px;
+    }
+
+    /* Signature: Received messages have NO BUBBLE */
+    .msg-rec {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      max-width: 82%;
+    }
+    .msg-rec-text {
+      font-size: var(--text-message);
+      line-height: 1.45;
+      color: var(--ink);
+    }
+    .msg-rec-time {
+      font-size: var(--text-meta);
+      color: var(--muted);
+      margin-top: 4px;
+    }
+
+    /* Sent messages: Solid sent bubble */
+    .msg-sent-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      align-self: flex-end;
+      max-width: 82%;
+      position: relative;
+    }
+    .msg-sent-bubble {
+      background: var(--sent-bubble);
+      color: var(--sent-bubble-ink);
+      border-radius: 20px 20px 4px 20px;
+      padding: 10px 14px;
+      font-size: var(--text-message);
+      line-height: 1.45;
+      position: relative;
+      word-break: break-word;
+    }
+    .msg-sent-meta {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 4px;
+      font-size: var(--text-meta);
+      margin-top: 4px;
+      color: rgba(255, 255, 255, 0.85);
+    }
+    .msg-photo-img {
+      width: 230px;
+      height: 150px;
+      border-radius: 14px;
+      object-fit: cover;
+      margin-bottom: 6px;
+      background: var(--surface-1);
+      display: block;
+    }
+    .quote-box {
+      border-left: 2px solid rgba(255, 255, 255, 0.6);
+      padding-left: 8px;
+      margin-bottom: 6px;
+      font-size: 13px;
+      opacity: 0.9;
+    }
+    .voice-box {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: var(--surface-1);
+      border-radius: 16px;
+      padding: 9px 14px;
+      width: 220px;
+      margin-top: 4px;
+    }
+    .voice-circle {
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      background: var(--ink);
+      color: var(--bg);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .v-bars {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      gap: 2px;
+      height: 18px;
+    }
+    .v-bar-tick {
+      flex: 1;
+      background: var(--ink);
+      border-radius: 2px;
+      opacity: 0.55;
+    }
+    .reaction-under {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      font-size: 12px;
+      color: var(--heart);
+      margin-top: 4px;
+    }
+    .conv-composer-row {
+      padding: 10px 18px 22px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: var(--header-bg);
+      backdrop-filter: blur(16px);
+      border-top: 1px solid var(--line);
+      z-index: 30;
+    }
+    .pill-composer {
+      flex: 1;
+      background: var(--surface-1);
+      border: none;
+      border-radius: 20px;
+      padding: 10px 16px;
+      font-family: var(--font-sans);
+      font-size: 15px;
+      color: var(--ink);
+      outline: none;
+    }
+    .pill-composer::placeholder { color: var(--muted); }
+    .btn-circle-action {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      background: var(--surface-1);
+      color: var(--ink);
+      border: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    /* ==========================================================================
+       SCREEN 3: SETTINGS SCREEN
+       ========================================================================== */
+    .settings-group {
+      border-top: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+      margin-bottom: 24px;
+    }
+    .settings-row-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 22px;
+      border-bottom: 1px solid var(--line);
+    }
+    .settings-row-item:last-child { border-bottom: none; }
+    .seg-theme-wrap {
+      display: flex;
+      background: var(--surface-1);
+      border-radius: 10px;
+      padding: 3px;
+      gap: 3px;
+      margin: 12px 22px 24px;
+    }
+    .seg-btn {
+      flex: 1;
+      background: transparent;
+      border: none;
+      padding: 8px 0;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--muted);
+      cursor: pointer;
+    }
+    .seg-btn.active {
+      background: var(--bg);
+      color: var(--ink);
+      font-weight: 600;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+    }
+    .toggle-ui {
+      width: 42px;
+      height: 24px;
+      background: var(--line);
+      border-radius: 100px;
+      position: relative;
+    }
+    .toggle-ui.active { background: var(--accent); }
+    .toggle-thumb-circle {
+      width: 20px;
+      height: 20px;
+      background: #FFFFFF;
+      border-radius: 50%;
+      position: absolute;
+      top: 2px;
+      left: 2px;
+    }
+    .toggle-ui.active .toggle-thumb-circle { transform: translateX(18px); }
+
+    /* ==========================================================================
+       SCREEN 4: CALLS SCREEN
+       ========================================================================== */
+    .call-item {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 13px 22px;
+      border-bottom: 1px solid var(--line);
+    }
+    .call-item:last-child { border-bottom: none; }
+    .call-meta-line {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 13px;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+    .call-missed { color: var(--heart); }
+  </style>
+</head>
+<body>
+
+  <!-- MASTER PROTO BAR -->
+  <header class="master-bar">
+    <div class="brand-wrap">
+      <span class="brand-title">[APP NAME]</span>
+      <span class="badge-approved">Editorial &amp; Calm</span>
+    </div>
+
+    <!-- Screen Navigator -->
+    <div class="screen-selector-tabs">
+      <button class="screen-tab-btn active" onclick="switchComparisonScreen('chats', this)">1. Chats List</button>
+      <button class="screen-tab-btn" onclick="switchComparisonScreen('conversation', this)">2. Conversation</button>
+      <button class="screen-tab-btn" onclick="switchComparisonScreen('settings', this)">3. Settings</button>
+      <button class="screen-tab-btn" onclick="switchComparisonScreen('calls', this)">4. Calls</button>
+    </div>
+  </header>
+
+  <!-- STAGE AREA -->
+  <main class="stage-wrap">
+    <div class="comparison-container">
+
+      <!-- ================================================================
+           COLUMN 1: LIGHT MODE (APPROVED — DO NOT CHANGE)
+           ================================================================ -->
+      <div class="device-column">
+        <div class="device-label">
+          <span>Light Theme</span>
+          <span class="pill-tag pill-light">Approved Reference</span>
+        </div>
+
+        <div class="iphone-shell theme-light">
+          <!-- iOS Status -->
+          <div class="ios-bar">
+            <span class="ios-time tnum">9:41</span>
+            <div class="ios-icons">
+              <i data-lucide="cellular" style="width: 14px; height: 14px;"></i>
+              <i data-lucide="wifi" style="width: 14px; height: 14px;"></i>
+              <i data-lucide="battery" style="width: 16px; height: 16px;"></i>
+            </div>
+          </div>
+
+          <!-- SCREEN: CHATS (LIGHT) -->
+          <div class="app-screen" id="light-screen-chats">
+            <div class="chats-header">
+              <h1 class="chats-title">Chats</h1>
+              <i data-lucide="edit-3" style="width: 19px; height: 19px; color: var(--muted);"></i>
+            </div>
+            <div class="sec-notice">
+              <i data-lucide="lock" style="width: 12px; height: 12px; color: var(--accent);"></i>
+              <span>End-to-end encrypted</span>
+            </div>
+            <div class="search-wrap">
+              <input class="search-input" type="text" placeholder="Search">
+            </div>
+
+            <div class="scroll-body">
+              <!-- Chat 1: Pinned -->
+              <div class="chat-item unread selected">
+                <div class="avatar tint-1">ML</div>
+                <div class="chat-info">
+                  <div class="chat-info-top">
+                    <span class="chat-name">Maya Lin <i data-lucide="pin" style="width: 12px; height: 12px; color: var(--muted);"></i></span>
+                    <span class="chat-time tnum">10:42 AM</span>
+                  </div>
+                  <div class="chat-info-bottom">
+                    <span class="chat-snippet">The book arrived this morning! Reading chapter 3 tonight.</span>
+                    <span class="unread-badge tnum">1</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Chat 2: Voice Note -->
+              <div class="chat-item unread">
+                <div class="avatar tint-2">JV</div>
+                <div class="chat-info">
+                  <div class="chat-info-top">
+                    <span class="chat-name">Julian Vance</span>
+                    <span class="chat-time tnum">9:18 AM</span>
+                  </div>
+                  <div class="chat-info-bottom">
+                    <span class="chat-snippet"><i data-lucide="mic" style="width: 14px; height: 14px; color: var(--accent);"></i> Voice message (0:42)</span>
+                    <span class="unread-badge tnum">2</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Chat 3: Group -->
+              <div class="chat-item">
+                <div class="avatar tint-3">SD</div>
+                <div class="chat-info">
+                  <div class="chat-info-top">
+                    <span class="chat-name">Sunday Dinner</span>
+                    <span class="chat-time tnum">Yesterday</span>
+                  </div>
+                  <div class="chat-info-bottom">
+                    <span class="chat-snippet">Claire: Can everyone bring a side dish or dessert?</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Chat 4: Photo -->
+              <div class="chat-item">
+                <div class="avatar tint-4">AR</div>
+                <div class="chat-info">
+                  <div class="chat-info-top">
+                    <span class="chat-name">Amara Rao</span>
+                    <span class="chat-time tnum">Yesterday</span>
+                  </div>
+                  <div class="chat-info-bottom">
+                    <span class="chat-snippet"><i data-lucide="image" style="width: 14px; height: 14px; color: var(--muted);"></i> Photo</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Chat 5: Muted -->
+              <div class="chat-item">
+                <div class="avatar tint-1">BH</div>
+                <div class="chat-info">
+                  <div class="chat-info-top">
+                    <span class="chat-name">Building Notice Board <i data-lucide="bell-off" style="width: 12px; height: 12px; color: var(--muted);"></i></span>
+                    <span class="chat-time tnum">Mon</span>
+                  </div>
+                  <div class="chat-info-bottom">
+                    <span class="chat-snippet">Elevator inspection scheduled for Thursday 9 AM.</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Chat 6: Long Name -->
+              <div class="chat-item">
+                <div class="avatar tint-2">EK</div>
+                <div class="chat-info">
+                  <div class="chat-info-top">
+                    <span class="chat-name">Dr. Elizabeth Montgomery-Smith</span>
+                    <span class="chat-time tnum">Oct 28</span>
+                  </div>
+                  <div class="chat-info-bottom">
+                    <span class="chat-snippet">Thank you for confirming the lab appointment.</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Chat 7: Theo Harris -->
+              <div class="chat-item">
+                <div class="avatar tint-3">TH</div>
+                <div class="chat-info">
+                  <div class="chat-info-top">
+                    <span class="chat-name">Theo Harris</span>
+                    <span class="chat-time tnum">Oct 24</span>
+                  </div>
+                  <div class="chat-info-bottom">
+                    <span class="chat-snippet">Let me know when you land in Zurich.</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Chat 8: Sophie Laurent -->
+              <div class="chat-item">
+                <div class="avatar tint-4">SL</div>
+                <div class="chat-info">
+                  <div class="chat-info-top">
+                    <span class="chat-name">Sophie Laurent</span>
+                    <span class="chat-time tnum">Oct 19</span>
+                  </div>
+                  <div class="chat-info-bottom">
+                    <span class="chat-snippet">Shared an article: Architecture of Quiet</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 3-Tab Bottom Nav -->
+            <nav class="bottom-bar">
+              <div class="nav-tab active">
+                <i data-lucide="message-square" style="width: 20px; height: 20px;"></i>
+                <span>Chats</span>
+              </div>
+              <div class="nav-tab">
+                <i data-lucide="phone" style="width: 20px; height: 20px;"></i>
+                <span>Calls</span>
+              </div>
+              <div class="nav-tab">
+                <i data-lucide="settings" style="width: 20px; height: 20px;"></i>
+                <span>Settings</span>
+              </div>
+            </nav>
+          </div>
+
+          <!-- SCREEN: CONVERSATION (LIGHT) -->
+          <div class="app-screen" id="light-screen-conversation" style="display: none;">
+            <div class="conv-wrap">
+              <div class="conv-top">
+                <div class="conv-contact">
+                  <i data-lucide="chevron-left" style="width: 22px; height: 22px;"></i>
+                  <div class="avatar tint-1" style="width: 36px; height: 36px; font-size: 14px;">ML</div>
+                  <div>
+                    <div class="conv-name-title">Maya Lin</div>
+                    <div class="conv-sub">Active now · End-to-end encrypted</div>
+                  </div>
+                </div>
+                <i data-lucide="phone" style="width: 18px; height: 18px; color: var(--muted);"></i>
+              </div>
+
+              <div class="messages-stream">
+                <div class="day-chip">TODAY</div>
+                <div class="msg-rec">
+                  <div class="msg-rec-text">Did the architecture monograph arrive yet?</div>
+                  <span class="msg-rec-time tnum">10:38 AM</span>
+                </div>
+                <div class="msg-sent-wrap">
+                  <div class="msg-sent-bubble">
+                    Yes, it just came in. The print quality is incredible.
+                    <div class="msg-sent-meta">
+                      <span class="tnum">10:39 AM</span>
+                      <i data-lucide="check-check" style="width: 13px; height: 13px;"></i>
+                    </div>
+                  </div>
+                </div>
+                <div class="msg-rec">
+                  <img class="msg-photo-img" src="https://images.unsplash.com/photo-1513694203232-719a280e022f?auto=format&fit=crop&w=400&q=80" alt="Courtyard">
+                  <div class="msg-rec-text">Look at this courtyard layout from page 42.</div>
+                  <span class="msg-rec-time tnum">10:40 AM</span>
+                </div>
+                <div class="msg-sent-wrap">
+                  <div class="msg-sent-bubble">
+                    <div class="quote-box"><strong>Maya:</strong> Look at this courtyard layout...</div>
+                    That timber framing is stunning.
+                    <div class="msg-sent-meta">
+                      <span class="tnum">10:41 AM</span>
+                      <i data-lucide="check-check" style="width: 13px; height: 13px;"></i>
+                    </div>
+                  </div>
+                  <div class="reaction-under"><span>❤️</span> <span style="font-size: 11px; font-weight: 500;">1</span></div>
+                </div>
+                <div class="msg-rec">
+                  <div class="voice-box">
+                    <div class="voice-circle"><i data-lucide="play" style="width: 14px; height: 14px; fill: var(--bg); margin-left: 2px;"></i></div>
+                    <div class="v-bars">
+                      <span class="v-bar-tick" style="height: 5px;"></span>
+                      <span class="v-bar-tick" style="height: 14px;"></span>
+                      <span class="v-bar-tick" style="height: 18px;"></span>
+                      <span class="v-bar-tick" style="height: 10px;"></span>
+                      <span class="v-bar-tick" style="height: 16px;"></span>
+                      <span class="v-bar-tick" style="height: 8px;"></span>
+                      <span class="v-bar-tick" style="height: 12px;"></span>
+                      <span class="v-bar-tick" style="height: 5px;"></span>
+                    </div>
+                    <span class="tnum" style="font-size: 11px; color: var(--muted);">0:42</span>
+                  </div>
+                  <span class="msg-rec-time tnum">10:42 AM</span>
+                </div>
+              </div>
+
+              <div class="conv-composer-row">
+                <i data-lucide="plus" style="width: 20px; height: 20px; color: var(--muted);"></i>
+                <input class="pill-composer" type="text" placeholder="Message...">
+                <button class="btn-circle-action"><i data-lucide="mic" style="width: 18px; height: 18px;"></i></button>
+              </div>
+            </div>
+          </div>
+
+          <!-- SCREEN: SETTINGS (LIGHT) -->
+          <div class="app-screen" id="light-screen-settings" style="display: none;">
+            <div class="chats-header">
+              <h1 class="chats-title">Settings</h1>
+            </div>
+            <div class="scroll-body">
+              <div class="seg-theme-wrap">
+                <button class="seg-btn active">Light</button>
+                <button class="seg-btn">Dark</button>
+                <button class="seg-btn">System</button>
+              </div>
+              <div class="settings-group">
+                <div class="settings-row-item">
+                  <div style="display: flex; align-items: center; gap: 12px;">
+                    <div class="avatar tint-1" style="width: 42px; height: 42px; font-size: 15px;">AM</div>
+                    <div>
+                      <div style="font-family: var(--font-serif); font-size: 16px; color: var(--ink);">Alex Mercer</div>
+                      <div class="tnum" style="font-size: 12px; color: var(--muted);">+1 (555) 019-2834</div>
+                    </div>
+                  </div>
+                  <i data-lucide="chevron-right" style="width: 18px; height: 18px; color: var(--muted);"></i>
+                </div>
+              </div>
+              <div class="settings-group">
+                <div class="settings-row-item">
+                  <div style="display: flex; align-items: center; gap: 12px;">
+                    <i data-lucide="bell" style="width: 18px; height: 18px; color: var(--muted);"></i>
+                    <span style="font-size: 15px; color: var(--ink);">Notifications</span>
+                  </div>
+                  <div class="toggle-ui active"><div class="toggle-thumb-circle"></div></div>
+                </div>
+                <div class="settings-row-item">
+                  <div style="display: flex; align-items: center; gap: 12px;">
+                    <i data-lucide="download" style="width: 18px; height: 18px; color: var(--muted);"></i>
+                    <div>
+                      <div style="font-size: 15px; color: var(--ink);">Add to Home Screen</div>
+                      <div style="font-size: 12px; color: var(--muted);">Install standalone app</div>
+                    </div>
+                  </div>
+                  <i data-lucide="chevron-right" style="width: 18px; height: 18px; color: var(--muted);"></i>
+                </div>
+                <div class="settings-row-item">
+                  <div style="display: flex; align-items: center; gap: 12px;">
+                    <i data-lucide="hard-drive" style="width: 18px; height: 18px; color: var(--muted);"></i>
+                    <div>
+                      <div style="font-size: 15px; color: var(--ink);">Storage and data</div>
+                      <div class="tnum" style="font-size: 12px; color: var(--muted);">12.4 MB on device</div>
+                    </div>
+                  </div>
+                  <span class="tnum" style="font-size: 13px; color: var(--muted);">Clear</span>
+                </div>
+              </div>
+              <div class="settings-group">
+                <div class="settings-row-item">
+                  <div style="display: flex; align-items: center; gap: 12px;">
+                    <i data-lucide="shield" style="width: 18px; height: 18px; color: var(--accent);"></i>
+                    <div>
+                      <div style="font-size: 15px; color: var(--ink);">Security details</div>
+                      <div style="font-size: 12px; color: var(--muted);">Device keys &amp; verification</div>
+                    </div>
+                  </div>
+                  <i data-lucide="chevron-right" style="width: 18px; height: 18px; color: var(--muted);"></i>
+                </div>
+              </div>
+            </div>
+            <nav class="bottom-bar">
+              <div class="nav-tab">
+                <i data-lucide="message-square" style="width: 20px; height: 20px;"></i>
+                <span>Chats</span>
+              </div>
+              <div class="nav-tab">
+                <i data-lucide="phone" style="width: 20px; height: 20px;"></i>
+                <span>Calls</span>
+              </div>
+              <div class="nav-tab active">
+                <i data-lucide="settings" style="width: 20px; height: 20px;"></i>
+                <span>Settings</span>
+              </div>
+            </nav>
+          </div>
+
+          <!-- SCREEN: CALLS (LIGHT) -->
+          <div class="app-screen" id="light-screen-calls" style="display: none;">
+            <div class="chats-header">
+              <h1 class="chats-title">Calls</h1>
+              <i data-lucide="phone-call" style="width: 19px; height: 19px; color: var(--muted);"></i>
+            </div>
+            <div class="scroll-body">
+              <div class="call-item">
+                <div class="avatar tint-1">ML</div>
+                <div class="chat-info">
+                  <div class="chat-info-top">
+                    <span class="chat-name">Maya Lin</span>
+                    <span class="chat-time tnum">10:14 AM</span>
+                  </div>
+                  <div class="call-meta-line">
+                    <i data-lucide="phone-incoming" style="width: 13px; height: 13px; color: var(--accent);"></i>
+                    <span>Incoming (14 mins)</span>
+                  </div>
+                </div>
+                <i data-lucide="phone" style="width: 18px; height: 18px; color: var(--muted);"></i>
+              </div>
+              <div class="call-item">
+                <div class="avatar tint-2">JV</div>
+                <div class="chat-info">
+                  <div class="chat-info-top">
+                    <span class="chat-name">Julian Vance</span>
+                    <span class="chat-time tnum">Yesterday</span>
+                  </div>
+                  <div class="call-meta-line">
+                    <i data-lucide="phone-outgoing" style="width: 13px; height: 13px; color: var(--muted);"></i>
+                    <span>Outgoing video (3 mins)</span>
+                  </div>
+                </div>
+                <i data-lucide="video" style="width: 18px; height: 18px; color: var(--muted);"></i>
+              </div>
+              <div class="call-item">
+                <div class="avatar tint-3">EK</div>
+                <div class="chat-info">
+                  <div class="chat-info-top">
+                    <span class="chat-name">Dr. Elizabeth Montgomery-Smith</span>
+                    <span class="chat-time tnum">Yesterday</span>
+                  </div>
+                  <div class="call-meta-line call-missed">
+                    <i data-lucide="phone-missed" style="width: 13px; height: 13px; color: var(--heart);"></i>
+                    <span>Missed call</span>
+                  </div>
+                </div>
+                <i data-lucide="phone" style="width: 18px; height: 18px; color: var(--muted);"></i>
+              </div>
+              <div class="call-item">
+                <div class="avatar tint-4">SL</div>
+                <div class="chat-info">
+                  <div class="chat-info-top">
+                    <span class="chat-name">Sophie Laurent</span>
+                    <span class="chat-time tnum">Monday</span>
+                  </div>
+                  <div class="call-meta-line">
+                    <i data-lucide="phone-incoming" style="width: 13px; height: 13px; color: var(--accent);"></i>
+                    <span>Incoming (22 mins)</span>
+                  </div>
+                </div>
+                <i data-lucide="phone" style="width: 18px; height: 18px; color: var(--muted);"></i>
+              </div>
+            </div>
+            <nav class="bottom-bar">
+              <div class="nav-tab">
+                <i data-lucide="message-square" style="width: 20px; height: 20px;"></i>
+                <span>Chats</span>
+              </div>
+              <div class="nav-tab active">
+                <i data-lucide="phone" style="width: 20px; height: 20px;"></i>
+                <span>Calls</span>
+              </div>
+              <div class="nav-tab">
+                <i data-lucide="settings" style="width: 20px; height: 20px;"></i>
+                <span>Settings</span>
+              </div>
+            </nav>
+          </div>
+
+          <div class="home-bar"></div>
+        </div>
+      </div>
+
+
+      <!-- ================================================================
+           COLUMN 2: REDESIGNED DARK MODE (WARM ESPRESSO & 3 SURFACES)
+           ================================================================ -->
+      <div class="device-column">
+        <div class="device-label">
+          <span>Dark Theme</span>
+          <span class="pill-tag pill-dark">Redesigned with Depth</span>
+        </div>
+
+        <div class="iphone-shell theme-dark">
+          <!-- iOS Status -->
+          <div class="ios-bar">
+            <span class="ios-time tnum">9:41</span>
+            <div class="ios-icons">
+              <i data-lucide="cellular" style="width: 14px; height: 14px;"></i>
+              <i data-lucide="wifi" style="width: 14px; height: 14px;"></i>
+              <i data-lucide="battery" style="width: 16px; height: 16px;"></i>
+            </div>
+          </div>
+
+          <!-- SCREEN: CHATS (DARK) -->
+          <div class="app-screen" id="dark-screen-chats">
+            <div class="chats-header">
+              <h1 class="chats-title">Chats</h1>
+              <i data-lucide="edit-3" style="width: 19px; height: 19px; color: var(--muted);"></i>
+            </div>
+            <div class="sec-notice">
+              <i data-lucide="lock" style="width: 12px; height: 12px; color: var(--accent);"></i>
+              <span>End-to-end encrypted</span>
+            </div>
+            <div class="search-wrap">
+              <input class="search-input" type="text" placeholder="Search">
+            </div>
+
+            <div class="scroll-body">
+              <!-- Chat 1: Pinned (Selected state using surface-2) -->
+              <div class="chat-item unread selected">
+                <div class="avatar tint-1">ML</div>
+                <div class="chat-info">
+                  <div class="chat-info-top">
+                    <span class="chat-name">Maya Lin <i data-lucide="pin" style="width: 12px; height: 12px; color: var(--muted);"></i></span>
+                    <span class="chat-time tnum">10:42 AM</span>
+                  </div>
+                  <div class="chat-info-bottom">
+                    <!-- Unread chat preview uses --ink for immediate distinction -->
+                    <span class="chat-snippet">The book arrived this morning! Reading chapter 3 tonight.</span>
+                    <span class="unread-badge tnum">1</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Chat 2: Voice Note -->
+              <div class="chat-item unread">
+                <div class="avatar tint-2">JV</div>
+                <div class="chat-info">
+                  <div class="chat-info-top">
+                    <span class="chat-name">Julian Vance</span>
+                    <span class="chat-time tnum">9:18 AM</span>
+                  </div>
+                  <div class="chat-info-bottom">
+                    <span class="chat-snippet"><i data-lucide="mic" style="width: 14px; height: 14px; color: var(--accent);"></i> Voice message (0:42)</span>
+                    <span class="unread-badge tnum">2</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Chat 3: Group -->
+              <div class="chat-item">
+                <div class="avatar tint-3">SD</div>
+                <div class="chat-info">
+                  <div class="chat-info-top">
+                    <span class="chat-name">Sunday Dinner</span>
+                    <span class="chat-time tnum">Yesterday</span>
+                  </div>
+                  <div class="chat-info-bottom">
+                    <span class="chat-snippet">Claire: Can everyone bring a side dish or dessert?</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Chat 4: Photo -->
+              <div class="chat-item">
+                <div class="avatar tint-4">AR</div>
+                <div class="chat-info">
+                  <div class="chat-info-top">
+                    <span class="chat-name">Amara Rao</span>
+                    <span class="chat-time tnum">Yesterday</span>
+                  </div>
+                  <div class="chat-info-bottom">
+                    <span class="chat-snippet"><i data-lucide="image" style="width: 14px; height: 14px; color: var(--muted);"></i> Photo</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Chat 5: Muted -->
+              <div class="chat-item">
+                <div class="avatar tint-1">BH</div>
+                <div class="chat-info">
+                  <div class="chat-info-top">
+                    <span class="chat-name">Building Notice Board <i data-lucide="bell-off" style="width: 12px; height: 12px; color: var(--muted);"></i></span>
+                    <span class="chat-time tnum">Mon</span>
+                  </div>
+                  <div class="chat-info-bottom">
+                    <span class="chat-snippet">Elevator inspection scheduled for Thursday 9 AM.</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Chat 6: Long Name -->
+              <div class="chat-item">
+                <div class="avatar tint-2">EK</div>
+                <div class="chat-info">
+                  <div class="chat-info-top">
+                    <span class="chat-name">Dr. Elizabeth Montgomery-Smith</span>
+                    <span class="chat-time tnum">Oct 28</span>
+                  </div>
+                  <div class="chat-info-bottom">
+                    <span class="chat-snippet">Thank you for confirming the lab appointment.</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Chat 7: Theo Harris -->
+              <div class="chat-item">
+                <div class="avatar tint-3">TH</div>
+                <div class="chat-info">
+                  <div class="chat-info-top">
+                    <span class="chat-name">Theo Harris</span>
+                    <span class="chat-time tnum">Oct 24</span>
+                  </div>
+                  <div class="chat-info-bottom">
+                    <span class="chat-snippet">Let me know when you land in Zurich.</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Chat 8: Sophie Laurent -->
+              <div class="chat-item">
+                <div class="avatar tint-4">SL</div>
+                <div class="chat-info">
+                  <div class="chat-info-top">
+                    <span class="chat-name">Sophie Laurent</span>
+                    <span class="chat-time tnum">Oct 19</span>
+                  </div>
+                  <div class="chat-info-bottom">
+                    <span class="chat-snippet">Shared an article: Architecture of Quiet</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 3-Tab Bottom Nav -->
+            <nav class="bottom-bar">
+              <div class="nav-tab active">
+                <i data-lucide="message-square" style="width: 20px; height: 20px;"></i>
+                <span>Chats</span>
+              </div>
+              <div class="nav-tab">
+                <i data-lucide="phone" style="width: 20px; height: 20px;"></i>
+                <span>Calls</span>
+              </div>
+              <div class="nav-tab">
+                <i data-lucide="settings" style="width: 20px; height: 20px;"></i>
+                <span>Settings</span>
+              </div>
+            </nav>
+          </div>
+
+          <!-- SCREEN: CONVERSATION (DARK) -->
+          <div class="app-screen" id="dark-screen-conversation" style="display: none;">
+            <div class="conv-wrap">
+              <div class="conv-top">
+                <div class="conv-contact">
+                  <i data-lucide="chevron-left" style="width: 22px; height: 22px;"></i>
+                  <div class="avatar tint-1" style="width: 36px; height: 36px; font-size: 14px;">ML</div>
+                  <div>
+                    <div class="conv-name-title">Maya Lin</div>
+                    <div class="conv-sub">Active now · End-to-end encrypted</div>
+                  </div>
+                </div>
+                <i data-lucide="phone" style="width: 18px; height: 18px; color: var(--muted);"></i>
+              </div>
+
+              <div class="messages-stream">
+                <div class="day-chip">TODAY</div>
+                <div class="msg-rec">
+                  <div class="msg-rec-text">Did the architecture monograph arrive yet?</div>
+                  <span class="msg-rec-time tnum">10:38 AM</span>
+                </div>
+                <div class="msg-sent-wrap">
+                  <div class="msg-sent-bubble">
+                    Yes, it just came in. The print quality is incredible.
+                    <div class="msg-sent-meta">
+                      <span class="tnum">10:39 AM</span>
+                      <i data-lucide="check-check" style="width: 13px; height: 13px;"></i>
+                    </div>
+                  </div>
+                </div>
+                <div class="msg-rec">
+                  <img class="msg-photo-img" src="https://images.unsplash.com/photo-1513694203232-719a280e022f?auto=format&fit=crop&w=400&q=80" alt="Courtyard">
+                  <div class="msg-rec-text">Look at this courtyard layout from page 42.</div>
+                  <span class="msg-rec-time tnum">10:40 AM</span>
+                </div>
+                <div class="msg-sent-wrap">
+                  <div class="msg-sent-bubble">
+                    <div class="quote-box"><strong>Maya:</strong> Look at this courtyard layout...</div>
+                    That timber framing is stunning.
+                    <div class="msg-sent-meta">
+                      <span class="tnum">10:41 AM</span>
+                      <i data-lucide="check-check" style="width: 13px; height: 13px;"></i>
+                    </div>
+                  </div>
+                  <div class="reaction-under"><span>❤️</span> <span style="font-size: 11px; font-weight: 500;">1</span></div>
+                </div>
+                <div class="msg-rec">
+                  <div class="voice-box">
+                    <div class="voice-circle"><i data-lucide="play" style="width: 14px; height: 14px; fill: var(--bg); margin-left: 2px;"></i></div>
+                    <div class="v-bars">
+                      <span class="v-bar-tick" style="height: 5px;"></span>
+                      <span class="v-bar-tick" style="height: 14px;"></span>
+                      <span class="v-bar-tick" style="height: 18px;"></span>
+                      <span class="v-bar-tick" style="height: 10px;"></span>
+                      <span class="v-bar-tick" style="height: 16px;"></span>
+                      <span class="v-bar-tick" style="height: 8px;"></span>
+                      <span class="v-bar-tick" style="height: 12px;"></span>
+                      <span class="v-bar-tick" style="height: 5px;"></span>
+                    </div>
+                    <span class="tnum" style="font-size: 11px; color: var(--muted);">0:42</span>
+                  </div>
+                  <span class="msg-rec-time tnum">10:42 AM</span>
+                </div>
+              </div>
+
+              <div class="conv-composer-row">
+                <i data-lucide="plus" style="width: 20px; height: 20px; color: var(--muted);"></i>
+                <input class="pill-composer" type="text" placeholder="Message...">
+                <button class="btn-circle-action"><i data-lucide="mic" style="width: 18px; height: 18px;"></i></button>
+              </div>
+            </div>
+          </div>
+
+          <!-- SCREEN: SETTINGS (DARK) -->
+          <div class="app-screen" id="dark-screen-settings" style="display: none;">
+            <div class="chats-header">
+              <h1 class="chats-title">Settings</h1>
+            </div>
+            <div class="scroll-body">
+              <div class="seg-theme-wrap">
+                <button class="seg-btn">Light</button>
+                <button class="seg-btn active">Dark</button>
+                <button class="seg-btn">System</button>
+              </div>
+              <div class="settings-group">
+                <div class="settings-row-item">
+                  <div style="display: flex; align-items: center; gap: 12px;">
+                    <div class="avatar tint-1" style="width: 42px; height: 42px; font-size: 15px;">AM</div>
+                    <div>
+                      <div style="font-family: var(--font-serif); font-size: 16px; color: var(--ink);">Alex Mercer</div>
+                      <div class="tnum" style="font-size: 12px; color: var(--muted);">+1 (555) 019-2834</div>
+                    </div>
+                  </div>
+                  <i data-lucide="chevron-right" style="width: 18px; height: 18px; color: var(--muted);"></i>
+                </div>
+              </div>
+              <div class="settings-group">
+                <div class="settings-row-item">
+                  <div style="display: flex; align-items: center; gap: 12px;">
+                    <i data-lucide="bell" style="width: 18px; height: 18px; color: var(--muted);"></i>
+                    <span style="font-size: 15px; color: var(--ink);">Notifications</span>
+                  </div>
+                  <div class="toggle-ui active"><div class="toggle-thumb-circle"></div></div>
+                </div>
+                <div class="settings-row-item">
+                  <div style="display: flex; align-items: center; gap: 12px;">
+                    <i data-lucide="download" style="width: 18px; height: 18px; color: var(--muted);"></i>
+                    <div>
+                      <div style="font-size: 15px; color: var(--ink);">Add to Home Screen</div>
+                      <div style="font-size: 12px; color: var(--muted);">Install standalone app</div>
+                    </div>
+                  </div>
+                  <i data-lucide="chevron-right" style="width: 18px; height: 18px; color: var(--muted);"></i>
+                </div>
+                <div class="settings-row-item">
+                  <div style="display: flex; align-items: center; gap: 12px;">
+                    <i data-lucide="hard-drive" style="width: 18px; height: 18px; color: var(--muted);"></i>
+                    <div>
+                      <div style="font-size: 15px; color: var(--ink);">Storage and data</div>
+                      <div class="tnum" style="font-size: 12px; color: var(--muted);">12.4 MB on device</div>
+                    </div>
+                  </div>
+                  <span class="tnum" style="font-size: 13px; color: var(--muted);">Clear</span>
+                </div>
+              </div>
+              <div class="settings-group">
+                <div class="settings-row-item">
+                  <div style="display: flex; align-items: center; gap: 12px;">
+                    <i data-lucide="shield" style="width: 18px; height: 18px; color: var(--accent);"></i>
+                    <div>
+                      <div style="font-size: 15px; color: var(--ink);">Security details</div>
+                      <div style="font-size: 12px; color: var(--muted);">Device keys &amp; verification</div>
+                    </div>
+                  </div>
+                  <i data-lucide="chevron-right" style="width: 18px; height: 18px; color: var(--muted);"></i>
+                </div>
+              </div>
+            </div>
+            <nav class="bottom-bar">
+              <div class="nav-tab">
+                <i data-lucide="message-square" style="width: 20px; height: 20px;"></i>
+                <span>Chats</span>
+              </div>
+              <div class="nav-tab">
+                <i data-lucide="phone" style="width: 20px; height: 20px;"></i>
+                <span>Calls</span>
+              </div>
+              <div class="nav-tab active">
+                <i data-lucide="settings" style="width: 20px; height: 20px;"></i>
+                <span>Settings</span>
+              </div>
+            </nav>
+          </div>
+
+          <!-- SCREEN: CALLS (DARK) -->
+          <div class="app-screen" id="dark-screen-calls" style="display: none;">
+            <div class="chats-header">
+              <h1 class="chats-title">Calls</h1>
+              <i data-lucide="phone-call" style="width: 19px; height: 19px; color: var(--muted);"></i>
+            </div>
+            <div class="scroll-body">
+              <div class="call-item">
+                <div class="avatar tint-1">ML</div>
+                <div class="chat-info">
+                  <div class="chat-info-top">
+                    <span class="chat-name">Maya Lin</span>
+                    <span class="chat-time tnum">10:14 AM</span>
+                  </div>
+                  <div class="call-meta-line">
+                    <i data-lucide="phone-incoming" style="width: 13px; height: 13px; color: var(--accent);"></i>
+                    <span>Incoming (14 mins)</span>
+                  </div>
+                </div>
+                <i data-lucide="phone" style="width: 18px; height: 18px; color: var(--muted);"></i>
+              </div>
+              <div class="call-item">
+                <div class="avatar tint-2">JV</div>
+                <div class="chat-info">
+                  <div class="chat-info-top">
+                    <span class="chat-name">Julian Vance</span>
+                    <span class="chat-time tnum">Yesterday</span>
+                  </div>
+                  <div class="call-meta-line">
+                    <i data-lucide="phone-outgoing" style="width: 13px; height: 13px; color: var(--muted);"></i>
+                    <span>Outgoing video (3 mins)</span>
+                  </div>
+                </div>
+                <i data-lucide="video" style="width: 18px; height: 18px; color: var(--muted);"></i>
+              </div>
+              <div class="call-item">
+                <div class="avatar tint-3">EK</div>
+                <div class="chat-info">
+                  <div class="chat-info-top">
+                    <span class="chat-name">Dr. Elizabeth Montgomery-Smith</span>
+                    <span class="chat-time tnum">Yesterday</span>
+                  </div>
+                  <div class="call-meta-line call-missed">
+                    <i data-lucide="phone-missed" style="width: 13px; height: 13px; color: var(--heart);"></i>
+                    <span>Missed call</span>
+                  </div>
+                </div>
+                <i data-lucide="phone" style="width: 18px; height: 18px; color: var(--muted);"></i>
+              </div>
+              <div class="call-item">
+                <div class="avatar tint-4">SL</div>
+                <div class="chat-info">
+                  <div class="chat-info-top">
+                    <span class="chat-name">Sophie Laurent</span>
+                    <span class="chat-time tnum">Monday</span>
+                  </div>
+                  <div class="call-meta-line">
+                    <i data-lucide="phone-incoming" style="width: 13px; height: 13px; color: var(--accent);"></i>
+                    <span>Incoming (22 mins)</span>
+                  </div>
+                </div>
+                <i data-lucide="phone" style="width: 18px; height: 18px; color: var(--muted);"></i>
+              </div>
+            </div>
+            <nav class="bottom-bar">
+              <div class="nav-tab">
+                <i data-lucide="message-square" style="width: 20px; height: 20px;"></i>
+                <span>Chats</span>
+              </div>
+              <div class="nav-tab active">
+                <i data-lucide="phone" style="width: 20px; height: 20px;"></i>
+                <span>Calls</span>
+              </div>
+              <div class="nav-tab">
+                <i data-lucide="settings" style="width: 20px; height: 20px;"></i>
+                <span>Settings</span>
+              </div>
+            </nav>
+          </div>
+
+          <div class="home-bar"></div>
+        </div>
+      </div>
+
+    </div>
+  </main>
+
+  <script>
+    lucide.createIcons();
+
+    function switchComparisonScreen(screenName, btn) {
+      document.querySelectorAll('.screen-tab-btn').forEach(b => b.classList.remove('active'));
+      if (btn) btn.classList.add('active');
+
+      const screens = ['chats', 'conversation', 'settings', 'calls'];
+      screens.forEach(s => {
+        const lightEl = document.getElementById(`light-screen-${s}`);
+        const darkEl = document.getElementById(`dark-screen-${s}`);
+        if (lightEl) lightEl.style.display = (s === screenName) ? 'flex' : 'none';
+        if (darkEl) darkEl.style.display = (s === screenName) ? 'flex' : 'none';
+      });
+
+      lucide.createIcons();
+    }
+  </script>
+</body>
+</html>
