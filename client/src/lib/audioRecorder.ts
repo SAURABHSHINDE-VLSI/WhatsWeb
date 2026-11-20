@@ -55,6 +55,14 @@ export class AudioRecorderController {
     this.chunks = [];
     this.sampledAmplitudes = [];
 
+    // Check secure context and mediaDevices availability (WebRTC browser requirement)
+    if (typeof window !== 'undefined' && !window.isSecureContext) {
+      throw new Error('Voice note recording requires HTTPS or localhost. Modern browsers block microphone access on unencrypted HTTP.');
+    }
+    if (!navigator?.mediaDevices?.getUserMedia) {
+      throw new Error('Your browser does not support audio recording or blocked microphone access. HTTPS or localhost is required.');
+    }
+
     // Request microphone stream
     try {
       this.audioStream = await navigator.mediaDevices.getUserMedia({

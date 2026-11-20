@@ -29,6 +29,7 @@ interface CallContextType {
   toggleMute: () => void;
   toggleVideo: () => void;
   switchCamera: () => Promise<void>;
+  dismissError: () => void;
 }
 
 const ICE_SERVERS: RTCConfiguration = {
@@ -136,9 +137,15 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     setIsMuted(false);
     setIsVideoOff(false);
     setDuration(0);
+    setErrorMessage(null);
     incomingOfferRef.current = null;
     pendingCandidatesRef.current = [];
   }, [stopRingtone]);
+
+  const dismissError = useCallback(() => {
+    setErrorMessage(null);
+    cleanupCall();
+  }, [cleanupCall]);
 
   // Duration timer when connected
   useEffect(() => {
@@ -181,7 +188,12 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       if (pc.connectionState === 'connected') {
         stopRingtone();
         setCallState('connected');
-      } else if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+        setErrorMessage(null);
+      } else if (pc.connectionState === 'failed') {
+        stopRingtone();
+        setErrorMessage('Call connection failed. Both peers need a reachable TURN relay across mobile/NAT networks.');
+        setTimeout(() => cleanupCall(), 4500);
+      } else if (pc.connectionState === 'disconnected') {
         cleanupCall();
       }
     };
@@ -204,6 +216,13 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     startRingtone('dial');
 
     try {
+      if (typeof window !== 'undefined' && !window.isSecureContext) {
+        throw new Error('WebRTC calls require HTTPS or localhost. Modern browsers block microphone & camera access over unencrypted HTTP (http://).');
+      }
+      if (!navigator?.mediaDevices?.getUserMedia) {
+        throw new Error('Your browser blocked media capture or does not support WebRTC. HTTPS or localhost is required.');
+      }
+
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: true,
         video: type === 'video' ? { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } } : false,
@@ -225,10 +244,28 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
         callType: type,
         offer,
       });
-    } catch (err) {
+    } catch (err: any) {
       console.error('[Call] Failed to acquire media or create offer', err);
-      setErrorMessage('Could not access microphone/camera');
-      cleanupCall();
+      stopRingtone();
+      if (localStreamRef.current) {
+        localStreamRef.current.getTracks().forEach((track) => track.stop());
+        localStreamRef.current = null;
+      }
+      setLocalStream(null);
+      setCallState('idle');
+
+      let userMsg = 'Could not access microphone/camera';
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        userMsg = 'Microphone/camera permission was denied in browser settings.';
+      } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+        userMsg = 'No microphone or camera found on this device.';
+      } else if (err.message) {
+        userMsg = err.message;
+      }
+      setErrorMessage(userMsg);
+      setTimeout(() => {
+        cleanupCall();
+      }, 5000);
     }
   }, [cleanupCall, createPeerConnection, startRingtone, user]);
 
@@ -238,6 +275,13 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     stopRingtone();
 
     try {
+      if (typeof window !== 'undefined' && !window.isSecureContext) {
+        throw new Error('WebRTC calls require HTTPS or localhost. Modern browsers block microphone & camera access over unencrypted HTTP (http://).');
+      }
+      if (!navigator?.mediaDevices?.getUserMedia) {
+        throw new Error('Your browser blocked media capture or does not support WebRTC. HTTPS or localhost is required.');
+      }
+
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: true,
         video: callType === 'video' ? { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } } : false,
@@ -266,10 +310,18 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       });
 
       setCallState('connected');
-    } catch (err) {
+    } catch (err: any) {
       console.error('[Call] Failed to accept call', err);
-      setErrorMessage('Could not connect call');
-      cleanupCall();
+      let userMsg = 'Could not connect call';
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        userMsg = 'Microphone/camera permission was denied in browser settings.';
+      } else if (err.message) {
+        userMsg = err.message;
+      }
+      setErrorMessage(userMsg);
+      setTimeout(() => {
+        cleanupCall();
+      }, 5000);
     }
   }, [callType, cleanupCall, createPeerConnection, partner, stopRingtone]);
 
@@ -439,6 +491,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
         toggleMute,
         toggleVideo,
         switchCamera,
+        dismissError,
       }}
     >
       {children}

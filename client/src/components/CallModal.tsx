@@ -34,6 +34,7 @@ export function CallModal() {
     toggleMute,
     toggleVideo,
     switchCamera,
+    dismissError,
   } = useCall();
 
   const localVideoRef = useRef<HTMLVideoElement>(null);
@@ -83,7 +84,14 @@ export function CallModal() {
       }}
     >
       {/* Hidden audio element for voice streaming */}
-      <audio ref={remoteAudioRef} autoPlay playsInline />
+      <audio
+        ref={remoteAudioRef}
+        autoPlay
+        playsInline
+        onLoadedMetadata={() => {
+          remoteAudioRef.current?.play().catch(() => {});
+        }}
+      />
 
       {/* Video Call Elements (if connected and video call) */}
       {callType === 'video' && callState === 'connected' && (
@@ -93,6 +101,9 @@ export function CallModal() {
             ref={remoteVideoRef}
             autoPlay
             playsInline
+            onLoadedMetadata={() => {
+              remoteVideoRef.current?.play().catch(() => {});
+            }}
             className="w-full h-full object-cover"
           />
 
@@ -146,8 +157,15 @@ export function CallModal() {
         </div>
 
         {errorMessage ? (
-          <div className="px-4 py-2 rounded-lg bg-red-500/10 text-red-500 text-sm font-medium animate-pulse">
-            {errorMessage}
+          <div className="max-w-md mx-auto my-1 px-4 py-3 rounded-xl bg-red-500/15 border border-red-500/30 text-red-400 text-xs sm:text-sm font-medium text-center shadow-lg">
+            <p className="leading-snug">{errorMessage}</p>
+            <button
+              type="button"
+              onClick={dismissError}
+              className="mt-2.5 px-3 py-1 rounded-lg bg-red-500/25 text-white text-xs font-semibold hover:bg-red-500/40 transition-colors cursor-pointer"
+            >
+              Dismiss
+            </button>
           </div>
         ) : (
           <div
@@ -220,7 +238,15 @@ export function CallModal() {
           paddingBottom: 'max(32px, env(safe-area-inset-bottom, 32px))',
         }}
       >
-        {callState === 'incoming' ? (
+        {callState === 'idle' && errorMessage ? (
+          <button
+            type="button"
+            onClick={dismissError}
+            className="px-6 py-2.5 rounded-xl bg-neutral-800 text-white font-medium text-sm hover:bg-neutral-700 active:scale-95 transition-all cursor-pointer shadow-lg"
+          >
+            Close Call
+          </button>
+        ) : callState === 'incoming' ? (
           /* Incoming Call Actions: Accept or Decline */
           <div className="flex items-center gap-10">
             <button

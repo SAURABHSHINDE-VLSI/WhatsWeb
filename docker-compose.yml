@@ -38,8 +38,8 @@ services:
       - VAPID_PUBLIC_KEY=${VAPID_PUBLIC_KEY:-}
       - VAPID_PRIVATE_KEY=${VAPID_PRIVATE_KEY:-}
       - VAPID_SUBJECT=${VAPID_SUBJECT:-mailto:security@whatsus.app}
-      - TURN_SECRET=${TURN_SECRET:-}
-      - TURN_URLS=${TURN_URLS:-stun:stun.l.google.com:19302}
+      - TURN_SECRET=${TURN_SECRET:-whatsus_turn_secret_dev}
+      - TURN_URLS=${TURN_URLS:-stun:stun.l.google.com:19302,turn:${APP_DOMAIN:-129.225.107.71.sslip.io}:3478?transport=udp,turn:${APP_DOMAIN:-129.225.107.71.sslip.io}:3478?transport=tcp}
       - MESSAGE_RETENTION_DAYS=${MESSAGE_RETENTION_DAYS:-30}
     volumes:
       - whatsus_uploads:/app/server/uploads
@@ -88,8 +88,6 @@ services:
       - --realm=${APP_DOMAIN:-129.225.107.71.sslip.io}
       - --min-port=49152
       - --max-port=49170
-    profiles:
-      - turn
 
 volumes:
   postgres_data:
